@@ -38,7 +38,7 @@ func main() {
 		log.Fatalf("minio client: %v", err)
 	}
 
-	store := server.NewVideoStore(mc, bucket)
+	store := server.NewVideoStore(&server.MinioWrapper{Client: mc}, bucket)
 	grpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(8 << 20)) // 8 MiB max recv message
 
 	srv := server.NewIngestServer(store, nil)

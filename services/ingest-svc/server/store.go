@@ -24,12 +24,28 @@ type CommitMarker struct {
 	CommittedAt   time.Time `json:"committed_at"`
 }
 
+type MinioClient interface {
+	PutObject(ctx context.Context, bucketName, objectName string, reader io.Reader, objectSize int64, opts minio.PutObjectOptions) (minio.UploadInfo, error)
+	CopyObject(ctx context.Context, dst minio.CopyDestOptions, src minio.CopySrcOptions) (minio.UploadInfo, error)
+	RemoveObject(ctx context.Context, bucketName, objectName string, opts minio.RemoveObjectOptions) error
+	GetObject(ctx context.Context, bucketName, objectName string, opts minio.GetObjectOptions) (io.ReadCloser, error)
+	StatObject(ctx context.Context, bucketName, objectName string, opts minio.StatObjectOptions) (minio.ObjectInfo, error)
+}
+
+type MinioWrapper struct {
+	*minio.Client
+}
+
+func (w *MinioWrapper) GetObject(ctx context.Context, bucketName, objectName string, opts minio.GetObjectOptions) (io.ReadCloser, error) {
+	return w.Client.GetObject(ctx, bucketName, objectName, opts)
+}
+
 type VideoStore struct {
-	client *minio.Client
+	client MinioClient
 	bucket string // "recon-raw"
 }
 
-func NewVideoStore(c *minio.Client, bucket string) *VideoStore {
+func NewVideoStore(c MinioClient, bucket string) *VideoStore {
 	if bucket == "" {
 		bucket = "recon-raw"
 	}

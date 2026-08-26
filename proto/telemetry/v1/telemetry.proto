@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package telemetry.v1;
+
+option go_package = "github.com/single-pass-recon/telemetry-worker/gen/telemetry/v1;telemetryv1";
+
+import "google/protobuf/timestamp.proto";
+
+message DroneTelemetry {
+  string mission_id = 1;
+  string flight_session_id = 2;
+  google.protobuf.Timestamp ts = 3;
+  oneof reading {
+    GPSReading gps = 10;
+    IMUReading imu = 11;
+    BaroReading baro = 12;
+    PPKReading ppk = 13;
+  }
+}
+
+message GPSReading {
+  double lat = 1;
+  double lon = 2;
+  double alt_m = 3;
+  float hdop = 4;
+  uint32 satellites = 5;
+}
+
+message IMUReading {
+  float accel_x = 1;
+  float accel_y = 2;
+  float accel_z = 3;
+  float gyro_x = 4;
+  float gyro_y = 5;
+  float gyro_z = 6;
+}
+
+message BaroReading {
+  float pressure_pa = 1;
+  float alt_m = 2;
+}
+
+message PPKReading {
+  double lat = 1;
+  double lon = 2;
+  double alt_m = 3;
+  string fix_type = 4; // "none" | "float" | "fixed"
+}

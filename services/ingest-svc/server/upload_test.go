@@ -187,7 +187,7 @@ func setupTestServer(t *testing.T) (ingestv1.IngestServiceClient, func()) {
 		t.Fatalf("failed to create minio client: %v", err)
 	}
 
-	videoStore := NewVideoStore(mc, "recon-raw")
+	videoStore := NewVideoStore(&MinioWrapper{Client: mc}, "recon-raw")
 	ingestServer := NewIngestServer(videoStore, nil)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
