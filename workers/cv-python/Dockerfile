@@ -69,5 +69,13 @@ COPY pyproject.toml poetry.lock ./
 RUN python3.11 -m pip install --no-cache-dir poetry==1.8.3 \
     && poetry install --no-root --only main
 
+# Day 17 SAM2 + DINO
+RUN python3.11 -m pip install --no-cache-dir "git+https://github.com/facebookresearch/sam2.git@2.1" transformers==4.42.3
+
+# Day 19 gsplat
+ARG TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9"
+ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
+RUN python3.11 -m pip install --no-cache-dir "gsplat==1.3.0"
+
 COPY . .
 CMD ["python3.11", "worker.py"]
