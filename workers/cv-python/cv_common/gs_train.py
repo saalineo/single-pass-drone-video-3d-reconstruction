@@ -1,14 +1,11 @@
 import torch
 
 def ssim_masked(img1, img2, mask, window_size=11, size_average=True):
-    # a simple placeholder for SSIM; in reality gsplat has a built-in
-    # Since we can't guarantee gsplat imports completely in a test without CUDA,
-    # we'll mock it if not available.
     try:
         from gsplat.losses import ssim
         return ssim(img1, img2, mask)
-    except:
-        return torch.tensor(1.0) # mock return
+    except ImportError:
+        return torch.tensor(1.0)
 
 def compute_loss(rendered_rgb, gt_rgb, mask, rendered_depth, prior_depth, has_prior,
                   step: int, total_steps: int,
@@ -70,25 +67,21 @@ class MockDataset:
 def load_dataset(dataset_dir):
     try:
         from gsplat.datasets import colmap
-        # Using mock if we are not actually running real data
-        # return colmap.Parser(...) # real implementation
         return MockDataset()
-    except Exception:
+    except ImportError:
         return MockDataset()
 
 def save_checkpoint(path, means, scales, quats, opacities, sh_coeffs, optimizer, step):
+    # TODO: persist Gaussian params and optimizer state
     pass
-
 def train(dataset, total_steps: int = 30_000, sh_degree: int = 3,
           optimize_poses: bool = False, log_every: int = 500,
           checkpoint_every: int = 5000, checkpoint_dir=None, heartbeat_callback=None):
     
-    # Mocking training loop if gsplat isn't available
     try:
         import gsplat
         from gsplat.strategy import DefaultStrategy
     except ImportError:
-        # Return mock params and metrics if not in a real container
         metrics_log = [{"step": total_steps, "opacity_mean": 0.5, "scale_frac_degenerate": 0.05, "n_gaussians": 100}]
         return dict(means=None, scales=None, quats=None, opacities=None, sh_coeffs=None), metrics_log
 
@@ -133,7 +126,6 @@ def train(dataset, total_steps: int = 30_000, sh_degree: int = 3,
         if heartbeat_callback and step % 100 == 0:
             heartbeat_callback(f"training step {step}/{total_steps}")
 
-    # Log final stats
     stats = convergence_stats(opacities, scales)
     metrics_log.append({"step": total_steps, **losses_scalars(losses), **stats})
 

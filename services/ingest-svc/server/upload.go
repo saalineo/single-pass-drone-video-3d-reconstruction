@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const maxSegmentBytes = 8 << 30 // 8 GiB guard rail, doc 04 §7 sizing
+const maxSegmentBytes = 8 << 30 // 8 GiB guard rail
 
 type WorkflowLauncher interface {
 	LaunchReconstruction(ctx context.Context, missionID, flightSessionID, preset string, segmentIndices []uint32) (runID string, temporalWorkflowID string, err error)
@@ -94,7 +94,7 @@ func (s *IngestServer) UploadVideoStream(stream ingestv1.IngestService_UploadVid
 		}
 	}
 	if received != hdr.GetTotalBytes() {
-		// doc 02 §7 failure mode: corrupt/truncated segment -> quarantine, do
+		// corrupt/truncated segment -> quarantine, do
 		// not commit. Client retries via GetUploadOffset + resume.
 		return status.Errorf(codes.DataLoss, "truncated upload: got %d want %d", received, hdr.GetTotalBytes())
 	}

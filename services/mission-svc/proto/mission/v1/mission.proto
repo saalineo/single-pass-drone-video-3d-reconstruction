@@ -16,7 +16,7 @@ service MissionService {
   }
 
   // Internal, service-to-service only. No REST annotation: not part of the
-  // public contract in doc 02 §6. Called by ingest-svc's FinalizeIngest.
+  // public contract . Called by ingest-svc's FinalizeIngest.
   rpc CreateRun(CreateRunRequest) returns (CreateRunResponse);
 }
 

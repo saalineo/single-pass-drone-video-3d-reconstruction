@@ -14,7 +14,7 @@ kind: StorageClass
 metadata:
   name: recon-warm-hdd
   annotations:
-    recon.io/provisioner-note: "backing for stateful datastores; erasure-coded HDD JBOD on core (doc06 §2)"
+    recon.io/provisioner-note: "backing for stateful datastores; erasure-coded HDD JBOD on core "
 provisioner: rancher.io/local-path
 volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Retain

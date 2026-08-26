@@ -49,13 +49,13 @@ def nearest_or_interpolate(records: list[dict], ts: datetime, max_gap_s: float =
         return before
         
     frac = (ts - t0).total_seconds() / delta_total
-    res = {}
+    interpolated = {}
     for k in before:
         if isinstance(before[k], (int, float)):
-            res[k] = before[k] + frac * (after[k] - before[k])
+            interpolated[k] = before[k] + frac * (after[k] - before[k])
         else:
-            res[k] = before[k] # inherit strings like 'fix_quality' from 'before'
-    return res
+            interpolated[k] = before[k]
+    return interpolated
 
 def build_fix(gps_rec, ppk_rec, baro_rec) -> GpsFix | None:
     if ppk_rec and ppk_rec.get("fix_quality") == "fixed":
@@ -153,8 +153,7 @@ def _key_from_uri(uri: str) -> str:
 def safe_download(key: str, dest: Path) -> Path | None:
     try:
         return download_to(key, dest)
-    except Exception:
-        # File might not exist (e.g. no ppk.log)
+    except Exception:  # file may not exist (ppk/baro logs are optional)
         return None
 
 def upload_text(key: str, content: str):
@@ -189,7 +188,6 @@ async def parse_vio_warm_start(payload: VioParseInput) -> VioParseOutput:
         return VioParseOutput(mission_id=payload.mission_id, attempt_id=attempt_id,
                                priors_manifest_uri=f"s3://{settings.bucket}/{priors_key}")
 
-    # Fallback EPSG 4978 or compute from first frame GPS if present
     target_epsg = "EPSG:4978"
     for frame in manifest.frames:
         g = nearest_or_interpolate(gps_log, frame.timestamp_utc)
@@ -202,10 +200,7 @@ async def parse_vio_warm_start(payload: VioParseInput) -> VioParseOutput:
     priors_manifest = build_priors_manifest(payload.mission_id, attempt_id, full_hash, manifest, gps_log, ppk_log, baro_log, target_epsg)
     uri = put_json(priors_key, priors_manifest.model_dump(mode="json"))
 
-    # Intrinsics are a stub for now unless passed in payload, typical flight_sessions call API
-    # Since we don't have API integration here, mock some standard values for text render
-    # Day 14 spec notes: "Camera intrinsics come from flight_sessions.sensors ... single shared camera_id"
-    # For now, default values if missing
+    # TODO(day-14): load intrinsics from flight_sessions API
     intrinsics = {
         "width": 3840, "height": 2160,
         "fx": 2000.0, "fy": 2000.0,

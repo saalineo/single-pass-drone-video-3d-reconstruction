@@ -137,7 +137,7 @@ func TestE2EControlPlane(t *testing.T) {
 	missionID := "mission-e2e-pass-1"
 	videoPath := "testdata/fake_segment.mp4"
 
-	// Step A: Upload Video Segment 0
+	// Upload Video Segment 0
 	shaHex, bytesUploaded := uploadSegment(ctx, ingestClient, missionID, videoPath, 0)
 	if bytesUploaded == 0 {
 		t.Fatalf("expected non-zero bytes uploaded")
@@ -164,7 +164,7 @@ func TestE2EControlPlane(t *testing.T) {
 		t.Errorf("expected marker sha256 %s, got %v", shaHex, markerMap["sha256"])
 	}
 
-	// Step B: Finalize Ingest & Trigger Temporal Workflow
+	// Finalize Ingest & Trigger Temporal Workflow
 	runID, workflowID := finalizeIngest(ctx, ingestClient, missionID, "standard")
 	if runID == "" || workflowID == "" {
 		t.Fatalf("expected non-empty run_id and workflow_id")
@@ -173,7 +173,7 @@ func TestE2EControlPlane(t *testing.T) {
 		t.Errorf("expected workflow ID recon-%s, got %s", runID, workflowID)
 	}
 
-	// Step C: Idempotency Re-run
+	// Idempotency Re-run
 	reUploadSha, _ := uploadSegment(ctx, ingestClient, missionID, videoPath, 0)
 	if reUploadSha != shaHex {
 		t.Errorf("expected deduplicated sha match %s, got %s", shaHex, reUploadSha)
@@ -184,7 +184,7 @@ func TestE2EControlPlane(t *testing.T) {
 		t.Errorf("idempotency fail: expected run_id=%s wf=%s, got run_id=%s wf=%s", runID, workflowID, reRunID, reWfID)
 	}
 
-	// Step D: Telemetry Leg Assertion
+	//  Telemetry Leg Assertion
 	telemStore := telemetrypkg.NewTelemetryStore(s3, "recon-raw")
 	telemBuf := telemetrypkg.NewWindowBuffer()
 	telemSeen := telemetrypkg.NewSeenSet(1000)

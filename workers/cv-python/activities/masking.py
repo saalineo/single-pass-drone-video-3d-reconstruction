@@ -3,7 +3,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
-import cv2
 
 from temporalio import activity
 
@@ -46,7 +45,6 @@ def seed_boxes(image, processor, detector) -> list[dict]:
     return [{"box": box.tolist(), "label": label} for box, label in zip(results["boxes"], results["labels"])]
 
 def build_predictor():
-    # If SAM2 isn't actually installed locally for this test/dry run, mock it
     try:
         from sam2.build_sam import build_sam2_video_predictor
         return build_sam2_video_predictor(
@@ -108,15 +106,15 @@ def process_and_upload(payload, manifest, set_id, predictor, processor, detector
     records = []
     for idx, frame in enumerate(manifest.frames):
         by_class = merge_and_dilate(masks_by_frame.get(idx, {}), active_objects)
-        flag = coverage_flag_for_frame(by_class)
+        coverage = coverage_flag_for_frame(by_class)
         paq_key = f"masks/{set_id}/{frame.frame_id:06d}.paq"
         
-        data = encode_mask_paq(frame.width, frame.height, by_class)
-        upload_bytes(data, f"missions/{payload.mission_id}/{paq_key}")
+        paq_bytes = encode_mask_paq(frame.width, frame.height, by_class)
+        upload_bytes(paq_bytes, f"missions/{payload.mission_id}/{paq_key}")
         
         records.append(MaskRecord(
             frame_id=frame.frame_id, object_key=paq_key,
-            classes_present=flag["classes_present"], pixel_coverage_frac=flag["pixel_coverage_frac"],
+            classes_present=coverage["classes_present"], pixel_coverage_frac=coverage["pixel_coverage_frac"],
             propagated_from_seed=(idx % RESEED_INTERVAL != 0),
         ))
     return records

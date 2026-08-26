@@ -112,7 +112,7 @@ class MaskManifest(BaseModel):
     masks: list[MaskRecord]
 
 
-# --- Activity I/O envelopes ---
+# Activity I/O envelopes
 
 class CurationInput(BaseModel):
     mission_id: str

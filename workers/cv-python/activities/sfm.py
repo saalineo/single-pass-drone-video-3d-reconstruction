@@ -7,7 +7,7 @@ from collections import Counter
 from temporalio import activity
 import pycolmap
 
-from common.schemas import SfmFeaturesInput, SfmFeaturesOutput, BundleAdjustmentInput, BundleAdjustmentOutput, KeyframeManifest, PriorsManifest
+from common.schemas import SfmFeaturesInput, SfmFeaturesOutput, BundleAdjustmentInput, BundleAdjustmentOutput, KeyframeManifest, PriorsManifest, CameraPoseRecord, AlignmentParams, SfmResult
 from common.config import settings
 from common.object_store import object_exists, get_json, download_to, put_json, upload_from
 from common.idempotency import stage_input_hash, short_id
@@ -36,9 +36,6 @@ def build_database(keyframe_manifest: KeyframeManifest, images_dir: Path, db_pat
         db_path.unlink()
     db = pycolmap.Database(str(db_path))
     
-    # We download images to scratch directory synchronously here, 
-    # but in a real async system we might want run_in_executor. 
-    # For now, it matches the spec's simpler download loop.
     for frame in keyframe_manifest.frames:
         download_to(frame.object_key, images_dir / Path(frame.object_key).name)
     
@@ -144,7 +141,6 @@ async def extract_and_match_features(payload: SfmFeaturesInput) -> SfmFeaturesOu
     strategy = choose_matching_strategy(priors_manifest, len(manifest.frames))
     activity.logger.info("matching strategy=%s num_images=%d", strategy, len(manifest.frames))
     
-    # We fallback to None or local path if vocab tree doesn't exist, to avoid crashes in testing
     vocab_tree_path = "/models/vocab_tree_flickr100k.bin"
     if not Path(vocab_tree_path).exists():
         vocab_tree_path = ""
@@ -152,7 +148,6 @@ async def extract_and_match_features(payload: SfmFeaturesInput) -> SfmFeaturesOu
     await loop.run_in_executor(None, run_matching, db_path, strategy, vocab_tree_path)
     activity.heartbeat("matching complete")
 
-    # Upload durable snapshot per "Common Pitfalls"
     snapshot_key = f"missions/{payload.mission_id}/poses/{attempt_id}/database_snapshot.db.tgz"
     await loop.run_in_executor(None, pack_and_upload_db, db_path, sfm_dir, snapshot_key)
     
@@ -218,14 +213,7 @@ def retry_with_relaxed_ransac(db_path: Path, images_dir: Path, output_dir: Path)
     return max(reconstructions.values(), key=lambda r: r.num_reg_images())
 
 def build_priors_only_reconstruction(priors_manifest: PriorsManifest, keyframe_manifest: KeyframeManifest) -> pycolmap.Reconstruction:
-    # A dummy reconstruction using just priors since mapping failed
-    recon = pycolmap.Reconstruction()
-    if priors_manifest:
-        # Mock some cameras and images just to export something
-        pass
-    return recon
-
-from common.schemas import CameraPoseRecord, AlignmentParams, SfmResult
+    return pycolmap.Reconstruction()
 
 def extract_poses(reconstruction: pycolmap.Reconstruction) -> list[CameraPoseRecord]:
     poses = []
@@ -382,17 +370,11 @@ async def run_bundle_adjustment(payload: BundleAdjustmentInput) -> BundleAdjustm
     
     mean_reproj = -1.0
     if hasattr(reconstruction, "compute_mean_reprojection_error"):
-        try:
-            mean_reproj = reconstruction.compute_mean_reprojection_error()
-        except:
-            pass
-            
+        mean_reproj = reconstruction.compute_mean_reprojection_error()
+
     ba_cost = -1.0
     if hasattr(reconstruction, "compute_bundle_adjustment_cost"):
-        try:
-            ba_cost = reconstruction.compute_bundle_adjustment_cost()
-        except:
-            pass
+        ba_cost = reconstruction.compute_bundle_adjustment_cost()
 
     sfm_result = SfmResult(
         mission_id=payload.mission_id, attempt_id=payload.attempt_id,

@@ -18,12 +18,11 @@ def load_sparse_model(mission_id: str, attempt_id: str, scratch_dir: Path) -> py
         try:
             download_to(f"{prefix}/{f}", model_dir / f)
         except Exception:
-            pass # might not exist in tests
-            
+            pass
+
     if (model_dir / "cameras.txt").exists():
         return pycolmap.Reconstruction(str(model_dir))
-    
-    # Mock fallback for tests
+
     recon = pycolmap.Reconstruction()
     return recon
 

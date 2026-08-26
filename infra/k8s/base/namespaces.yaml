@@ -37,7 +37,7 @@ metadata:
   name: recon-gpu
   labels:
     recon.io/bounded-context: cv-pipeline
-    pod-security.kubernetes.io/enforce: privileged  # GPU device plugin + gVisor/Kata runtimes (doc05 §5)
+    pod-security.kubernetes.io/enforce: privileged  # GPU device plugin + gVisor/Kata runtimes
 ---
 apiVersion: v1
 kind: Namespace

@@ -34,8 +34,8 @@ def align_depth_to_sparse(z_net: np.ndarray, uv: np.ndarray, xyz_world: np.ndarr
         a, b = p
         return a * z_net_sampled + b - z_sfm
 
-    res = least_squares(residuals, x0=[1.0, 0.0], loss="soft_l1", f_scale=0.5)
-    r = np.abs(residuals(res.x))
+    fit1 = least_squares(residuals, x0=[1.0, 0.0], loss="soft_l1", f_scale=0.5)
+    r = np.abs(residuals(fit1.x))
     
     keep_count = max(min_points, int(len(r) * (1.0 - trim_fraction)))
     if keep_count < len(r):
@@ -45,10 +45,10 @@ def align_depth_to_sparse(z_net: np.ndarray, uv: np.ndarray, xyz_world: np.ndarr
         keep = np.ones_like(r, dtype=bool)
         
     z_net_sampled, z_sfm = z_net_sampled[keep], z_sfm[keep]
-    res = least_squares(residuals, x0=res.x, loss="soft_l1", f_scale=0.3)
+    fit2 = least_squares(residuals, x0=fit1.x, loss="soft_l1", f_scale=0.3)
 
-    a, b = res.x
-    rmse = float(np.sqrt(np.mean(residuals(res.x) ** 2)))
+    a, b = fit2.x
+    rmse = float(np.sqrt(np.mean(residuals(fit2.x) ** 2)))
     diagnostics = {"a": float(a), "b": float(b), "rmse_m": rmse, "n_inliers": int(keep.sum()),
                     "n_total": int(valid.sum())}
     return float(a), float(b), diagnostics

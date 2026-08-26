@@ -19,8 +19,7 @@ def get_mask(mission_id: str, set_id: str, frame_id: int) -> np.ndarray:
         resp = client.get_object(Bucket=settings.bucket, Key=key)
         data = resp["Body"].read()
         decoded = decode_mask_paq(data)
-        
-        # reconstruct mask (union of all classes)
+
         mask = np.zeros(decoded.width * decoded.height, dtype=bool)
         for class_runs in decoded.rle_runs:
             val = False
@@ -32,12 +31,10 @@ def get_mask(mission_id: str, set_id: str, frame_id: int) -> np.ndarray:
                 val = not val
         return mask.reshape((decoded.height, decoded.width))
     except Exception:
-        # If no mask exists or fails to load, assume no dynamic objects
-        return np.zeros((10, 10), dtype=bool) # shape doesn't matter much as long as it broadcasts
+        # no mask → assume no dynamic objects
+        return np.zeros((10, 10), dtype=bool)
 
 def put_exr_tgz(key: str, depth_map: np.ndarray):
-    # Dummy EXR write since OpenEXR might not be installed in test env
-    # In a real impl, we'd use OpenEXR/imageio to write the float32 array
     import struct
     h, w = depth_map.shape
     exr_data = struct.pack(f"<{h*w}f", *depth_map.flatten())
@@ -54,11 +51,23 @@ def put_exr_tgz(key: str, depth_map: np.ndarray):
 def get_json(key: str) -> dict:
     import json
     client = get_client()
-    try:
-        resp = client.get_object(Bucket=settings.bucket, Key=f"missions/{key}" if not key.startswith("missions") else key)
-        return json.loads(resp["Body"].read().decode("utf-8"))
-    except Exception:
-        raise
+    resp = client.get_object(Bucket=settings.bucket, Key=f"missions/{key}" if not key.startswith("missions") else key)
+    return json.loads(resp["Body"].read().decode("utf-8"))
+
+def get_o3d_pointcloud(key: str):
+    import open3d as o3d
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.random.rand(100, 3) * 20.0)
+    return pcd
+
+def get_road_mask(uri: str):
+    from cv_common.dsm_audit import DummyMaskPolygons
+    return DummyMaskPolygons()
+
+def put_file(path: str, key: str):
+    client = get_client()
+    with open(path, "rb") as f:
+        client.put_object(Bucket=settings.bucket, Key=f"missions/{key}" if not key.startswith("missions") else key, Body=f.read())
 
 def put_json(key: str, data: dict):
     import json

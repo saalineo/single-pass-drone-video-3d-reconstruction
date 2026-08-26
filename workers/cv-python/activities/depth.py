@@ -5,6 +5,7 @@ from pathlib import Path
 from temporalio import activity
 import numpy as np
 import asyncio
+from cv2 import resize, INTER_NEAREST
 
 from cv_common import colmap_io, depth_models, depth_align, minio_io
 from common.config import settings
@@ -52,8 +53,6 @@ async def infer_metric_depth(mission_id: str, set_id: str, attempt_id: str) -> d
         z_metric = a * z_net + b
         
         if mask.shape != z_metric.shape:
-            # Handle possible size mismatch if needed
-            from cv2 import resize, INTER_NEAREST
             mask = resize(mask.astype(np.uint8), (z_metric.shape[1], z_metric.shape[0]), interpolation=INTER_NEAREST).astype(bool)
             
         z_metric[mask > 0] = 0.0

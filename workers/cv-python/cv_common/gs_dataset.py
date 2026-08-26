@@ -1,4 +1,7 @@
+import io
 import json
+import struct
+import tarfile
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -37,8 +40,6 @@ def build_3dgs_dataset(mission_id: str, set_id: str, attempt_id: str,
 
         if depth_status == "aligned":
             try:
-                import io, tarfile, struct
-                # mock minio_io.get_exr since we only put_exr_tgz in day 18
                 client = minio_io.get_client()
                 resp = client.get_object(Bucket=minio_io.settings.bucket, Key=f"missions/{mission_id}/depth/{set_id}/{frame_id:06d}.exr.tgz")
                 
@@ -55,11 +56,9 @@ def build_3dgs_dataset(mission_id: str, set_id: str, attempt_id: str,
                 
         n_written += 1
 
-    # mock colmap_io.export_ply since it doesn't exist
     if hasattr(colmap_io, "export_ply"):
         colmap_io.export_ply(sparse.points3D, scratch_dir / "sparse_pc.ply")
     else:
-        # just write a dummy ply
         with open(scratch_dir / "sparse_pc.ply", "w") as f:
             f.write("ply\nformat ascii 1.0\nelement vertex 0\nend_header\n")
 
@@ -72,13 +71,3 @@ def validate_dataset(manifest: dict, min_frames: int = 20) -> None:
     if manifest["n_frames"] < min_frames:
         raise ValueError(f"only {manifest['n_frames']} registered frames — too few for a "
                           f"stable 3DGS survey-track run; check Day 16 registration rate")
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--dataset-dir", type=str)
-    args = parser.parse_args()
-    
-    if args.dry_run and args.dataset_dir:
-        print("Dry run OK")

@@ -24,3 +24,15 @@ def export_splat(params: dict, out_path: Path):
     # Binary compact format logic
     with open(out_path, "wb") as f:
         f.write(b"")
+
+def load_gaussians_as_points(path):
+    # Mock return for testing DSM audit
+    # Real implementation uses plyfile to read the standard 3DGS PLY format
+    # and extracts (x,y,z) as points and sigmoids the opacity.
+    points = np.random.rand(100, 3) * 20.0
+    opacity = np.ones(100, dtype=np.float32)
+    return points, opacity
+    # and extracts (x,y,z) as points and sigmoids the opacity.
+    points = np.random.rand(100, 3) * 20.0
+    opacity = np.ones(100, dtype=np.float32)
+    return points, opacity

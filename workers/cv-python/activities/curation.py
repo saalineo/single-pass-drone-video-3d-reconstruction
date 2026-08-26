@@ -3,6 +3,7 @@ import json
 import os
 import cv2
 import numpy as np
+from math import radians, sin, cos, sqrt, atan2
 from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ProcessPoolExecutor
@@ -60,8 +61,6 @@ def exposure_score(bgr: np.ndarray) -> tuple[float, float, float]:
     clip_high = float(hist[-5:].sum() / hist.sum())
     return entropy, clip_low, clip_high
 
-# Use default ORB params. nfeatures=500 as in the spec.
-# To avoid pickling issues in ProcessPoolExecutor, initialize it lazily in the shard function or globally.
 def get_orb():
     if not hasattr(get_orb, "orb"):
         get_orb.orb = cv2.ORB_create(nfeatures=500)
@@ -81,7 +80,6 @@ def overlap_ratio(prev_gray: np.ndarray, cur_gray: np.ndarray) -> float:
 def gps_jump_flag(prev_fix: GpsFix, cur_fix: GpsFix, dt_s: float) -> bool:
     if prev_fix is None or cur_fix is None or dt_s <= 0:
         return False
-    from math import radians, sin, cos, sqrt, atan2
     R = 6371000.0
     dlat, dlon = radians(cur_fix.lat - prev_fix.lat), radians(cur_fix.lon - prev_fix.lon)
     a = sin(dlat/2)**2 + cos(radians(prev_fix.lat)) * cos(radians(cur_fix.lat)) * sin(dlon/2)**2
@@ -121,15 +119,9 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
     cap = cv2.VideoCapture(str(local_mp4))
     cap.set(cv2.CAP_PROP_POS_MSEC, start_s * 1000)
     
-    # Pre-read the first frame of this shard to compute dup overlap properly, 
-    # but practically we start fresh at shard boundary.
     results = []
     prev_gray, prev_ts = None, None
     frame_idx = 0
-    
-    # We will need some mock GPS logic or allow None since we don't parse real video telemetry here 
-    # unless it's provided. The spec doesn't detail GPS extraction from MP4 in this file, it just 
-    # mentions parsing it or it's None. We'll leave it as None for now since `FrameQuality.gps` is Optional.
 
     while True:
         pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
@@ -142,7 +134,7 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
             
         ts = pos_msec / 1000.0
         
-        # Downscale to 1080p if larger, for blur scoring consistency.
+        # Downscale to 1080p if larger, for blur scoring consistency
         h, w = frame.shape[:2]
         if w > 1920:
             scale = 1920 / w
@@ -164,23 +156,21 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
         elif dup > DUPLICATE_OVERLAP_MAX:
             status = "dropped_duplicate"
             
-        # Quality score composite
-        n_blur = normalize_val(blur, BLUR_MIN, 1000.0) # arbitrary max for normalization
+        n_blur = normalize_val(blur, BLUR_MIN, 1000.0)  # 1000 is an empirical upper bound
         n_ent = normalize_val(entropy, ENTROPY_MIN_BITS, 8.0)
         quality_score = 0.5 * n_blur + 0.3 * n_ent + 0.2 * (1.0 - (clip_lo + clip_hi))
 
-        # We need a stable timestamp.
         timestamp_utc = datetime.fromtimestamp(ts, tz=timezone.utc)
-        
+
         fq = FrameQuality(
-            frame_id="", # filled later globally
+            frame_id="",
             source_segment=segment_name,
             source_frame_index=frame_idx,
             timestamp_utc=timestamp_utc,
-            object_key="", # filled later
+            object_key="",
             width=w,
             height=h,
-            sha256="", # filled on save
+            sha256="",
             laplacian_variance=blur,
             exposure_entropy_bits=entropy,
             exposure_clip_low_frac=clip_lo,
@@ -189,18 +179,13 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
             gps=None,
             status=status
         )
-        # To avoid holding too much in memory, we save raw frame bytes only if kept?
-        # Actually passing images between processes is slow. 
-        # A better pattern is the shard returns the kept list, and we can extract images later.
-        # But wait, we can just save them to scratch and upload.
-        # The spec implies the worker process can do the CLAHE and upload or save to scratch.
         if status == "kept":
             norm_bgr = normalize_for_matching(frame)
             scratch_path = local_mp4.parent / f"{segment_name}_{frame_idx}.jpg"
             cv2.imwrite(str(scratch_path), norm_bgr)
             fq.sha256 = sha256_file(scratch_path)
-            # Stash scratch path temporarily in object_key to pass back
-            fq.object_key = str(scratch_path)
+            fq.object_key = str(scratch_path)  # scratch path carried forward until upload
+
             
         results.append(fq)
         
@@ -252,49 +237,41 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
                 boundaries = []
                 
             if not boundaries:
-                # fallback if ffprobe fails or no I-frames
-                # just do one big shard
+                # no I-frames from ffprobe treat whole file as one shard
                 cap = cv2.VideoCapture(str(local_mp4))
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
                 frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
                 end_s = (frame_count / fps) + 1.0 if fps > 0 else 3600.0
                 cap.release()
                 boundaries = [0.0, end_s]
-                
+
             if boundaries[0] > 0.0:
                 boundaries.insert(0, 0.0)
-                
-            # Create pairs of (start, end)
+
             for i in range(len(boundaries)):
                 start_s = boundaries[i]
-                end_s = boundaries[i+1] if i + 1 < len(boundaries) else 3600.0 # arbitrary large if last
+                end_s = boundaries[i+1] if i + 1 < len(boundaries) else 3600.0
                 futures.append(loop.run_in_executor(
                     pool, curate_segment_shard, local_mp4, start_s, end_s, segment_name, set_id
                 ))
-                
+
         for fut in futures:
-            results = await fut
-            all_scored.extend(results)
+            shard_results = await fut
+            all_scored.extend(shard_results)
             activity.heartbeat(f"processed a shard")
-            
-    # Sort globally by timestamp
+
     all_scored.sort(key=lambda f: f.timestamp_utc)
-    
-    # Select keyframes via non-max suppression
-    # Note: we should only select from the 'kept' ones based on thresholds
+
     threshold_passed = [f for f in all_scored if f.status == "kept"]
     selected = select_keyframes(threshold_passed)
-    
-    # Update statuses for those that passed thresholds but were window dropped
+
     selected_ids = {id(f) for f in selected}
     for f in all_scored:
         if f.status == "kept" and id(f) not in selected_ids:
             f.status = "dropped_window"
-            # Cleanup temp file
             if f.object_key and Path(f.object_key).exists():
                 Path(f.object_key).unlink()
 
-    # Now upload the selected frames
     stats = {"dropped_total": 0}
     kept_frames = []
     global_frame_idx = 0
@@ -303,18 +280,18 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
             frame_id = f"{global_frame_idx:06d}"
             f.frame_id = frame_id
             object_key = f"missions/{payload.mission_id}/keyframes/{set_id}/{frame_id}.jpg"
-            
-            # Upload
+
             temp_path = Path(f.object_key)
             await loop.run_in_executor(None, upload_from, temp_path, object_key)
             temp_path.unlink()
-            
+
             f.object_key = object_key
             kept_frames.append(f)
             global_frame_idx += 1
         else:
             stats[f.status] = stats.get(f.status, 0) + 1
             stats["dropped_total"] += 1
+
 
     manifest = KeyframeManifest(
         mission_id=payload.mission_id, set_id=set_id, input_content_hash=full_hash,

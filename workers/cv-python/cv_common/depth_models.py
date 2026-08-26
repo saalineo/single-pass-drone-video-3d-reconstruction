@@ -1,7 +1,6 @@
 import torch
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 import numpy as np
-import os
 
 class DepthAnythingV2Metric:
     """Wraps the metric-head DA-v2 checkpoint (outdoor, up to ~80m range)."""
@@ -9,7 +8,6 @@ class DepthAnythingV2Metric:
 
     def __init__(self, device: str = "cuda"):
         self.device = device
-        # Handle dry run when weights aren't downloaded
         try:
             self.processor = AutoImageProcessor.from_pretrained(self.CKPT)
             self.model = AutoModelForDepthEstimation.from_pretrained(self.CKPT).to(device).eval()
@@ -50,7 +48,6 @@ def infer_tiled(model, rgb: np.ndarray, tile: int = 896, overlap: int = 128) -> 
     for y in range(0, max(h - overlap, 1), stride):
         for x in range(0, max(w - overlap, 1), stride):
             y0, x0 = min(y, h - tile), min(x, w - tile)
-            # handle small images or edges
             actual_tile_h = min(tile, h - y0)
             actual_tile_w = min(tile, w - x0)
             patch = rgb[y0:y0 + actual_tile_h, x0:x0 + actual_tile_w]

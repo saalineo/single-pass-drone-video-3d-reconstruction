@@ -7,12 +7,12 @@ import (
 	"sync"
 )
 
-// DedupKey mirrors doc 04 §4's (mission_id, t, sensor) tuple. JetStream's
+// DedupKey mirrors the (mission_id, t, sensor) tuple used in dedup filtering.
 // Nats-Msg-Id dedup window (2m, step 1) already filters most republish
 // duplicates before they reach us; this is a second, defensive layer that
 // also catches duplicates that arrive more than 2 minutes apart (e.g. an
 // edge kit replaying a store-and-forward queue after a long datalink outage,
-// doc 07 §6) or duplicates crossing a JetStream stream restart.
+// or duplicates crossing a JetStream stream restart).
 func DedupKey(missionID, sensor string, tsUnixNano int64) string {
 	h := sha256.Sum256([]byte(missionID + "|" + sensor + "|" + strconv.FormatInt(tsUnixNano, 10)))
 	return hex.EncodeToString(h[:])

@@ -69,7 +69,7 @@ func (s *TelemetryStore) CommitWindow(ctx context.Context, key string, windowSta
 	objectName := fmt.Sprintf("missions/%s/raw/telemetry/%s/%010d.jsonl", missionID, sensor, windowStart)
 	tmpName := fmt.Sprintf("missions/%s/.tmp/telemetry/%s/%010d.jsonl", missionID, sensor, windowStart)
 
-	// 1. Upload to .tmp
+	// Upload to .tmp
 	_, err := s.client.PutObject(ctx, s.bucket, tmpName, bytes.NewReader(content), int64(len(content)), minio.PutObjectOptions{
 		ContentType: "application/jsonlines",
 	})
@@ -77,7 +77,7 @@ func (s *TelemetryStore) CommitWindow(ctx context.Context, key string, windowSta
 		return fmt.Errorf("put tmp telemetry: %w", err)
 	}
 
-	// 2. Atomic copy to target path
+	// Atomic copy to target path
 	_, err = s.client.CopyObject(ctx,
 		minio.CopyDestOptions{Bucket: s.bucket, Object: objectName},
 		minio.CopySrcOptions{Bucket: s.bucket, Object: tmpName},
@@ -86,7 +86,7 @@ func (s *TelemetryStore) CommitWindow(ctx context.Context, key string, windowSta
 		return fmt.Errorf("copy telemetry object: %w", err)
 	}
 
-	// 3. Write commit marker
+	// Write commit marker
 	markerName := objectName + ".sha256"
 	markerPayload, _ := json.Marshal(map[string]interface{}{
 		"sha256":    shaHex,
@@ -101,10 +101,10 @@ func (s *TelemetryStore) CommitWindow(ctx context.Context, key string, windowSta
 		return fmt.Errorf("write telemetry commit marker: %w", err)
 	}
 
-	// 4. Cleanup .tmp
+	// Cleanup .tmp
 	_ = s.client.RemoveObject(ctx, s.bucket, tmpName, minio.RemoveObjectOptions{})
 
-	// 5. Update manifest
+	// Update manifest
 	return s.updateManifest(ctx, missionID, sensor, objectName, windowStart)
 }
 
