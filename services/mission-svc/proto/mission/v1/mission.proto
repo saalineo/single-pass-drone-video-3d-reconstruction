@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package recon.mission.v1;
+
+option go_package = "github.com/single-pass-recon/mission-svc/gen/mission/v1;missionv1";
+
+import "google/protobuf/timestamp.proto";
+
+service MissionService {
+  rpc CreateMission(CreateMissionRequest) returns (CreateMissionResponse);
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+}
+
+enum Classification {
+  CLASSIFICATION_UNSPECIFIED = 0;
+  CLASSIFICATION_UNCLASSIFIED = 1;
+  CLASSIFICATION_CONFIDENTIAL = 2;
+  CLASSIFICATION_RESTRICTED = 3;
+}
+
+enum MissionStatus {
+  MISSION_STATUS_UNSPECIFIED = 0;
+  MISSION_STATUS_CREATED = 1;
+  MISSION_STATUS_INGESTING = 2;
+  MISSION_STATUS_PROCESSING = 3;
+  MISSION_STATUS_COMPLETED = 4;
+  MISSION_STATUS_FAILED = 5;
+}
+
+message CreateMissionRequest {
+  string name = 1;
+  Classification classification = 2;
+  string aoi_geojson = 3;
+  repeated string expected_sensors = 4;
+  string operator_id = 5;
+}
+
+message CreateMissionResponse {
+  string mission_id = 1;
+  MissionStatus status = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message GetStatusRequest {
+  string mission_id = 1;
+}
+
+message GetStatusResponse {
+  string mission_id = 1;
+  MissionStatus status = 2;
+}

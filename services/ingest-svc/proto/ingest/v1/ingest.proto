@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package recon.ingest.v1;
+
+option go_package = "github.com/single-pass-recon/ingest-svc/gen/ingest/v1;ingestv1";
+
+service IngestService {
+  rpc UploadSession(stream UploadChunk) returns (stream UploadAck);
+}
+
+message UploadChunk {
+  string mission_id = 1;
+  string segment_id = 2;
+  uint64 chunk_offset = 3;
+  bytes data = 4;
+  string sha256_chunk = 5;
+}
+
+message UploadAck {
+  string segment_id = 1;
+  uint64 bytes_received = 2;
+  bool committed = 3;
+}
