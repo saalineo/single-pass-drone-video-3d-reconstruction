@@ -1,0 +1,52 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: postgresql
+  namespace: recon-datastores
+spec:
+  interval: 30m
+  chartRef:
+    kind: OCIRepository
+    name: bitnami-postgresql
+    namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+  values:
+    image:
+      registry: docker.io
+      repository: bitnamisecure/postgresql
+      tag: 16.4.0-debian-12-r1
+    auth:
+      existingSecret: postgresql-app-credentials
+      secretKeys:
+        adminPasswordKey: postgres-password
+        userPasswordKey: password
+      username: recon_app
+      database: recon
+    primary:
+      persistence:
+        enabled: true
+        storageClass: recon-warm-hdd
+        size: 20Gi
+      resources:
+        requests: { cpu: 500m, memory: 1Gi }
+        limits: { cpu: "2", memory: 4Gi }
+      initdb:
+        scripts:
+          01-postgis.sql: |
+            CREATE EXTENSION IF NOT EXISTS postgis;
+            CREATE EXTENSION IF NOT EXISTS pgcrypto;
+          02-temporal-dbs.sql: |
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+      extendedConfiguration: |
+        max_connections = 200
+        shared_buffers = 1GB
+        wal_level = replica
+    metrics:
+      enabled: true
