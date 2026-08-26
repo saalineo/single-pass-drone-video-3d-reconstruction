@@ -1,0 +1,37 @@
+image:
+  registry: docker.io
+  repository: bitnamisecure/postgresql
+  tag: 16.4.0-debian-12-r1
+
+auth:
+  existingSecret: postgresql-app-credentials
+  secretKeys:
+    adminPasswordKey: postgres-password
+    userPasswordKey: password
+  username: recon_app
+  database: recon
+
+primary:
+  persistence:
+    enabled: true
+    storageClass: recon-warm-hdd
+    size: 20Gi
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: "2", memory: 4Gi }
+  initdb:
+    scripts:
+      01-postgis.sql: |
+        CREATE EXTENSION IF NOT EXISTS postgis;
+        CREATE EXTENSION IF NOT EXISTS pgcrypto;
+      02-temporal-dbs.sql: |
+        CREATE DATABASE temporal;
+        CREATE DATABASE temporal_visibility;
+
+  extendedConfiguration: |
+    max_connections = 200
+    shared_buffers = 1GB
+    wal_level = replica
+
+metrics:
+  enabled: true

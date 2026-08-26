@@ -1,0 +1,27 @@
+image:
+  registry: docker.io
+  repository: bitnamisecure/minio
+  tag: 2024.8.3-debian-12-r0
+
+mode: standalone
+
+auth:
+  existingSecret: minio-root-credentials
+  forcePassword: false
+
+persistence:
+  enabled: true
+  storageClass: recon-warm-hdd
+  size: 50Gi
+
+resources:
+  requests: { cpu: 250m, memory: 512Mi }
+  limits: { cpu: "1", memory: 2Gi }
+
+apiIngress:
+  enabled: false
+
+metrics:
+  prometheusAuthType: none
+  serviceMonitor:
+    enabled: false
