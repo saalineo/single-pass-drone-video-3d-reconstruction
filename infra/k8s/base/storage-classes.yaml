@@ -1,0 +1,21 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: recon-nvme-scratch
+  annotations:
+    recon.io/provisioner-note: "local-path on dev; rook-ceph RBD on core (doc06 §2)"
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: false
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: recon-warm-hdd
+  annotations:
+    recon.io/provisioner-note: "backing for stateful datastores; erasure-coded HDD JBOD on core (doc06 §2)"
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+allowVolumeExpansion: true
