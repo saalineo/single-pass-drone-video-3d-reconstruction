@@ -1,46 +1,62 @@
 package main
 
 import (
-	"log/slog"
+	"log"
 	"net"
 	"os"
 
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	ingestv1 "github.com/single-pass-recon/ingest-svc/gen/ingest/v1"
-	"github.com/single-pass-recon/ingest-svc/internal/server"
+	"github.com/single-pass-recon/ingest-svc/server"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 )
 
-const defaultAddr = ":50051"
+func getEnvOrDefault(key, fallback string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return fallback
+}
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	endpoint := getEnvOrDefault("MINIO_ENDPOINT", "minio.recon-datastores.svc.cluster.local:9000")
+	accessKey := os.Getenv("MINIO_ACCESS_KEY")
+	secretKey := os.Getenv("MINIO_SECRET_KEY")
+	useTLS := os.Getenv("MINIO_USE_TLS") == "true"
+	bucket := getEnvOrDefault("INGEST_RAW_BUCKET", "recon-raw")
+	port := getEnvOrDefault("INGEST_GRPC_PORT", "50051")
 
-	addr := os.Getenv("GRPC_LISTEN_ADDR")
-	if addr == "" {
-		addr = defaultAddr
-	}
-
-	lis, err := net.Listen("tcp", addr)
+	mc, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: useTLS,
+	})
 	if err != nil {
-		log.Error("failed to listen", "err", err)
-		os.Exit(1)
+		log.Fatalf("minio client: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
-	ingestv1.RegisterIngestServiceServer(grpcServer, server.NewIngestServer(log))
+	store := server.NewVideoStore(mc, bucket)
+	grpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(8 << 20)) // 8 MiB max recv message
+
+	srv := server.NewIngestServer(store, nil)
+	ingestv1.RegisterIngestServiceServer(grpcServer, srv)
 
 	healthSrv := health.NewServer()
 	healthv1.RegisterHealthServer(grpcServer, healthSrv)
-	healthSrv.SetServingStatus("recon.ingest.v1.IngestService", healthv1.HealthCheckResponse_SERVING)
+	healthSrv.SetServingStatus("ingest.v1.IngestService", healthv1.HealthCheckResponse_SERVING)
 
 	reflection.Register(grpcServer)
 
-	log.Info("ingest-svc listening", "addr", addr)
+	lis, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Fatalf("failed to listen on port %s: %v", port, err)
+	}
+
+	log.Printf("ingest-svc listening on :%s", port)
 	if err := grpcServer.Serve(lis); err != nil {
-		log.Error("grpc server stopped", "err", err)
-		os.Exit(1)
+		log.Fatalf("grpc server exited: %v", err)
 	}
 }

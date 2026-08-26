@@ -1,9 +1,10 @@
 .PHONY: proto build run test
 
 proto:
-	PATH="$(PATH):$(shell go env GOPATH)/bin" protoc \
-	  --go_out=. --go_opt=module=github.com/single-pass-recon/ingest-svc \
-	  --go-grpc_out=. --go-grpc_opt=module=github.com/single-pass-recon/ingest-svc \
+	mkdir -p gen/ingest/v1
+	PATH="$(PATH):$(shell go env GOPATH)/bin" protoc -I proto \
+	  --go_out=gen --go_opt=paths=source_relative \
+	  --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
 	  proto/ingest/v1/ingest.proto
 
 build:

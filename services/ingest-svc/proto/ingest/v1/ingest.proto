@@ -1,23 +1,64 @@
 syntax = "proto3";
 
-package recon.ingest.v1;
+package ingest.v1;
 
 option go_package = "github.com/single-pass-recon/ingest-svc/gen/ingest/v1;ingestv1";
 
 service IngestService {
-  rpc UploadSession(stream UploadChunk) returns (stream UploadAck);
+  // Client-streaming upload of one video segment.
+  rpc UploadVideoStream(stream UploadVideoChunk) returns (UploadVideoResponse);
+
+  // Lets an edge kit resume a dropped upload without re-sending bytes already
+  // committed as parts of the in-progress multipart upload.
+  rpc GetUploadOffset(GetUploadOffsetRequest) returns (GetUploadOffsetResponse);
+
+  // Called once all segments for a flight session are committed. Creates the
+  // pipeline_runs row (via mission-svc) and starts ReconstructionWorkflow.
+  rpc FinalizeIngest(FinalizeIngestRequest) returns (FinalizeIngestResponse);
 }
 
-message UploadChunk {
+message UploadVideoChunk {
+  oneof payload {
+    UploadVideoHeader header = 1;  // first message only
+    bytes chunk_data = 2;          // subsequent messages, <= 4 MiB each
+  }
+}
+
+message UploadVideoHeader {
   string mission_id = 1;
-  string segment_id = 2;
-  uint64 chunk_offset = 3;
-  bytes data = 4;
-  string sha256_chunk = 5;
+  string flight_session_id = 2;
+  uint32 segment_index = 3;   // maps to {segment:05d}.mp4
+  string sha256_hex = 4;      // client-declared full-object hash
+  uint64 total_bytes = 5;
+  string producer = 6;        // e.g. "edge-kit/1.3.2"
+  uint64 resume_offset = 7;   // 0 for a fresh upload
 }
 
-message UploadAck {
-  string segment_id = 1;
-  uint64 bytes_received = 2;
-  bool committed = 3;
+message UploadVideoResponse {
+  string object_uri = 1;      // s3://recon-raw/missions/{id}/raw/video/{seg}.mp4
+  string sha256_hex = 2;
+  uint64 bytes_received = 3;
+  bool deduplicated = 4;      // true if an identical committed object already existed
+}
+
+message GetUploadOffsetRequest {
+  string mission_id = 1;
+  uint32 segment_index = 2;
+  string sha256_hex = 3;
+}
+
+message GetUploadOffsetResponse {
+  uint64 committed_bytes = 1; // bytes already durably staged; client resumes from here
+}
+
+message FinalizeIngestRequest {
+  string mission_id = 1;
+  string flight_session_id = 2;
+  repeated uint32 segment_indices = 3;
+  string preset = 4; // "standard" | "fast-preview" | "high-fidelity"
+}
+
+message FinalizeIngestResponse {
+  string run_id = 1;
+  string temporal_workflow_id = 2;
 }

@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v7.35.1
-// source: proto/ingest/v1/ingest.proto
+// source: ingest/v1/ingest.proto
 
 package ingestv1
 
@@ -19,14 +19,23 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	IngestService_UploadSession_FullMethodName = "/recon.ingest.v1.IngestService/UploadSession"
+	IngestService_UploadVideoStream_FullMethodName = "/ingest.v1.IngestService/UploadVideoStream"
+	IngestService_GetUploadOffset_FullMethodName   = "/ingest.v1.IngestService/GetUploadOffset"
+	IngestService_FinalizeIngest_FullMethodName    = "/ingest.v1.IngestService/FinalizeIngest"
 )
 
 // IngestServiceClient is the client API for IngestService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type IngestServiceClient interface {
-	UploadSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, UploadAck], error)
+	// Client-streaming upload of one video segment.
+	UploadVideoStream(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[UploadVideoChunk, UploadVideoResponse], error)
+	// Lets an edge kit resume a dropped upload without re-sending bytes already
+	// committed as parts of the in-progress multipart upload.
+	GetUploadOffset(ctx context.Context, in *GetUploadOffsetRequest, opts ...grpc.CallOption) (*GetUploadOffsetResponse, error)
+	// Called once all segments for a flight session are committed. Creates the
+	// pipeline_runs row (via mission-svc) and starts ReconstructionWorkflow.
+	FinalizeIngest(ctx context.Context, in *FinalizeIngestRequest, opts ...grpc.CallOption) (*FinalizeIngestResponse, error)
 }
 
 type ingestServiceClient struct {
@@ -37,24 +46,51 @@ func NewIngestServiceClient(cc grpc.ClientConnInterface) IngestServiceClient {
 	return &ingestServiceClient{cc}
 }
 
-func (c *ingestServiceClient) UploadSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, UploadAck], error) {
+func (c *ingestServiceClient) UploadVideoStream(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[UploadVideoChunk, UploadVideoResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &IngestService_ServiceDesc.Streams[0], IngestService_UploadSession_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &IngestService_ServiceDesc.Streams[0], IngestService_UploadVideoStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[UploadChunk, UploadAck]{ClientStream: stream}
+	x := &grpc.GenericClientStream[UploadVideoChunk, UploadVideoResponse]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type IngestService_UploadSessionClient = grpc.BidiStreamingClient[UploadChunk, UploadAck]
+type IngestService_UploadVideoStreamClient = grpc.ClientStreamingClient[UploadVideoChunk, UploadVideoResponse]
+
+func (c *ingestServiceClient) GetUploadOffset(ctx context.Context, in *GetUploadOffsetRequest, opts ...grpc.CallOption) (*GetUploadOffsetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetUploadOffsetResponse)
+	err := c.cc.Invoke(ctx, IngestService_GetUploadOffset_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ingestServiceClient) FinalizeIngest(ctx context.Context, in *FinalizeIngestRequest, opts ...grpc.CallOption) (*FinalizeIngestResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FinalizeIngestResponse)
+	err := c.cc.Invoke(ctx, IngestService_FinalizeIngest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 // IngestServiceServer is the server API for IngestService service.
 // All implementations must embed UnimplementedIngestServiceServer
 // for forward compatibility.
 type IngestServiceServer interface {
-	UploadSession(grpc.BidiStreamingServer[UploadChunk, UploadAck]) error
+	// Client-streaming upload of one video segment.
+	UploadVideoStream(grpc.ClientStreamingServer[UploadVideoChunk, UploadVideoResponse]) error
+	// Lets an edge kit resume a dropped upload without re-sending bytes already
+	// committed as parts of the in-progress multipart upload.
+	GetUploadOffset(context.Context, *GetUploadOffsetRequest) (*GetUploadOffsetResponse, error)
+	// Called once all segments for a flight session are committed. Creates the
+	// pipeline_runs row (via mission-svc) and starts ReconstructionWorkflow.
+	FinalizeIngest(context.Context, *FinalizeIngestRequest) (*FinalizeIngestResponse, error)
 	mustEmbedUnimplementedIngestServiceServer()
 }
 
@@ -65,8 +101,14 @@ type IngestServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedIngestServiceServer struct{}
 
-func (UnimplementedIngestServiceServer) UploadSession(grpc.BidiStreamingServer[UploadChunk, UploadAck]) error {
-	return status.Errorf(codes.Unimplemented, "method UploadSession not implemented")
+func (UnimplementedIngestServiceServer) UploadVideoStream(grpc.ClientStreamingServer[UploadVideoChunk, UploadVideoResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method UploadVideoStream not implemented")
+}
+func (UnimplementedIngestServiceServer) GetUploadOffset(context.Context, *GetUploadOffsetRequest) (*GetUploadOffsetResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetUploadOffset not implemented")
+}
+func (UnimplementedIngestServiceServer) FinalizeIngest(context.Context, *FinalizeIngestRequest) (*FinalizeIngestResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FinalizeIngest not implemented")
 }
 func (UnimplementedIngestServiceServer) mustEmbedUnimplementedIngestServiceServer() {}
 func (UnimplementedIngestServiceServer) testEmbeddedByValue()                       {}
@@ -89,27 +131,71 @@ func RegisterIngestServiceServer(s grpc.ServiceRegistrar, srv IngestServiceServe
 	s.RegisterService(&IngestService_ServiceDesc, srv)
 }
 
-func _IngestService_UploadSession_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(IngestServiceServer).UploadSession(&grpc.GenericServerStream[UploadChunk, UploadAck]{ServerStream: stream})
+func _IngestService_UploadVideoStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(IngestServiceServer).UploadVideoStream(&grpc.GenericServerStream[UploadVideoChunk, UploadVideoResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type IngestService_UploadSessionServer = grpc.BidiStreamingServer[UploadChunk, UploadAck]
+type IngestService_UploadVideoStreamServer = grpc.ClientStreamingServer[UploadVideoChunk, UploadVideoResponse]
+
+func _IngestService_GetUploadOffset_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUploadOffsetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IngestServiceServer).GetUploadOffset(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IngestService_GetUploadOffset_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IngestServiceServer).GetUploadOffset(ctx, req.(*GetUploadOffsetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IngestService_FinalizeIngest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FinalizeIngestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IngestServiceServer).FinalizeIngest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IngestService_FinalizeIngest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IngestServiceServer).FinalizeIngest(ctx, req.(*FinalizeIngestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 // IngestService_ServiceDesc is the grpc.ServiceDesc for IngestService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var IngestService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "recon.ingest.v1.IngestService",
+	ServiceName: "ingest.v1.IngestService",
 	HandlerType: (*IngestServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetUploadOffset",
+			Handler:    _IngestService_GetUploadOffset_Handler,
+		},
+		{
+			MethodName: "FinalizeIngest",
+			Handler:    _IngestService_FinalizeIngest_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "UploadSession",
-			Handler:       _IngestService_UploadSession_Handler,
-			ServerStreams: true,
+			StreamName:    "UploadVideoStream",
+			Handler:       _IngestService_UploadVideoStream_Handler,
 			ClientStreams: true,
 		},
 	},
-	Metadata: "proto/ingest/v1/ingest.proto",
+	Metadata: "ingest/v1/ingest.proto",
 }
