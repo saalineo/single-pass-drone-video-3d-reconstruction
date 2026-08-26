@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v7.35.1
-// source: proto/mission/v1/mission.proto
+// source: mission/v1/mission.proto
 
 package missionv1
 
@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MissionService_CreateMission_FullMethodName = "/recon.mission.v1.MissionService/CreateMission"
-	MissionService_GetStatus_FullMethodName     = "/recon.mission.v1.MissionService/GetStatus"
+	MissionService_CreateMission_FullMethodName    = "/mission.v1.MissionService/CreateMission"
+	MissionService_GetMissionStatus_FullMethodName = "/mission.v1.MissionService/GetMissionStatus"
+	MissionService_CreateRun_FullMethodName        = "/mission.v1.MissionService/CreateRun"
 )
 
 // MissionServiceClient is the client API for MissionService service.
@@ -28,7 +29,10 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MissionServiceClient interface {
 	CreateMission(ctx context.Context, in *CreateMissionRequest, opts ...grpc.CallOption) (*CreateMissionResponse, error)
-	GetStatus(ctx context.Context, in *GetStatusRequest, opts ...grpc.CallOption) (*GetStatusResponse, error)
+	GetMissionStatus(ctx context.Context, in *GetMissionStatusRequest, opts ...grpc.CallOption) (*GetMissionStatusResponse, error)
+	// Internal, service-to-service only. No REST annotation: not part of the
+	// public contract in doc 02 §6. Called by ingest-svc's FinalizeIngest.
+	CreateRun(ctx context.Context, in *CreateRunRequest, opts ...grpc.CallOption) (*CreateRunResponse, error)
 }
 
 type missionServiceClient struct {
@@ -49,10 +53,20 @@ func (c *missionServiceClient) CreateMission(ctx context.Context, in *CreateMiss
 	return out, nil
 }
 
-func (c *missionServiceClient) GetStatus(ctx context.Context, in *GetStatusRequest, opts ...grpc.CallOption) (*GetStatusResponse, error) {
+func (c *missionServiceClient) GetMissionStatus(ctx context.Context, in *GetMissionStatusRequest, opts ...grpc.CallOption) (*GetMissionStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetStatusResponse)
-	err := c.cc.Invoke(ctx, MissionService_GetStatus_FullMethodName, in, out, cOpts...)
+	out := new(GetMissionStatusResponse)
+	err := c.cc.Invoke(ctx, MissionService_GetMissionStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *missionServiceClient) CreateRun(ctx context.Context, in *CreateRunRequest, opts ...grpc.CallOption) (*CreateRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateRunResponse)
+	err := c.cc.Invoke(ctx, MissionService_CreateRun_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +78,10 @@ func (c *missionServiceClient) GetStatus(ctx context.Context, in *GetStatusReque
 // for forward compatibility.
 type MissionServiceServer interface {
 	CreateMission(context.Context, *CreateMissionRequest) (*CreateMissionResponse, error)
-	GetStatus(context.Context, *GetStatusRequest) (*GetStatusResponse, error)
+	GetMissionStatus(context.Context, *GetMissionStatusRequest) (*GetMissionStatusResponse, error)
+	// Internal, service-to-service only. No REST annotation: not part of the
+	// public contract in doc 02 §6. Called by ingest-svc's FinalizeIngest.
+	CreateRun(context.Context, *CreateRunRequest) (*CreateRunResponse, error)
 	mustEmbedUnimplementedMissionServiceServer()
 }
 
@@ -78,8 +95,11 @@ type UnimplementedMissionServiceServer struct{}
 func (UnimplementedMissionServiceServer) CreateMission(context.Context, *CreateMissionRequest) (*CreateMissionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateMission not implemented")
 }
-func (UnimplementedMissionServiceServer) GetStatus(context.Context, *GetStatusRequest) (*GetStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetStatus not implemented")
+func (UnimplementedMissionServiceServer) GetMissionStatus(context.Context, *GetMissionStatusRequest) (*GetMissionStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMissionStatus not implemented")
+}
+func (UnimplementedMissionServiceServer) CreateRun(context.Context, *CreateRunRequest) (*CreateRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateRun not implemented")
 }
 func (UnimplementedMissionServiceServer) mustEmbedUnimplementedMissionServiceServer() {}
 func (UnimplementedMissionServiceServer) testEmbeddedByValue()                        {}
@@ -120,20 +140,38 @@ func _MissionService_CreateMission_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MissionService_GetStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetStatusRequest)
+func _MissionService_GetMissionStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMissionStatusRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MissionServiceServer).GetStatus(ctx, in)
+		return srv.(MissionServiceServer).GetMissionStatus(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: MissionService_GetStatus_FullMethodName,
+		FullMethod: MissionService_GetMissionStatus_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MissionServiceServer).GetStatus(ctx, req.(*GetStatusRequest))
+		return srv.(MissionServiceServer).GetMissionStatus(ctx, req.(*GetMissionStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MissionService_CreateRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MissionServiceServer).CreateRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MissionService_CreateRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MissionServiceServer).CreateRun(ctx, req.(*CreateRunRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -142,7 +180,7 @@ func _MissionService_GetStatus_Handler(srv interface{}, ctx context.Context, dec
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var MissionService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "recon.mission.v1.MissionService",
+	ServiceName: "mission.v1.MissionService",
 	HandlerType: (*MissionServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -150,10 +188,14 @@ var MissionService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MissionService_CreateMission_Handler,
 		},
 		{
-			MethodName: "GetStatus",
-			Handler:    _MissionService_GetStatus_Handler,
+			MethodName: "GetMissionStatus",
+			Handler:    _MissionService_GetMissionStatus_Handler,
+		},
+		{
+			MethodName: "CreateRun",
+			Handler:    _MissionService_CreateRun_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/mission/v1/mission.proto",
+	Metadata: "mission/v1/mission.proto",
 }

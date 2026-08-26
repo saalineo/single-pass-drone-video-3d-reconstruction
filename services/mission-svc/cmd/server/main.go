@@ -1,46 +1,76 @@
 package main
 
 import (
-	"log/slog"
+	"context"
+	"log"
 	"net"
 	"os"
+	"strconv"
+	"time"
 
+	"github.com/single-pass-recon/mission-svc/api"
+	"github.com/single-pass-recon/mission-svc/db"
 	missionv1 "github.com/single-pass-recon/mission-svc/gen/mission/v1"
-	"github.com/single-pass-recon/mission-svc/internal/server"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 )
 
-const defaultAddr = ":50051"
+func getEnvOrDefault(key, fallback string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return fallback
+}
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	grpcPort := getEnvOrDefault("MISSION_GRPC_PORT", "50051")
+	httpPort := getEnvOrDefault("MISSION_HTTP_PORT", "8080")
+	dsn := getEnvOrDefault("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/reconstruction?sslmode=disable")
+	maxConnsStr := getEnvOrDefault("POSTGRES_MAX_CONNS", "10")
 
-	addr := os.Getenv("GRPC_LISTEN_ADDR")
-	if addr == "" {
-		addr = defaultAddr
-	}
+	maxConns, _ := strconv.Atoi(maxConnsStr)
 
-	lis, err := net.Listen("tcp", addr)
+	ctx := context.Background()
+
+	pool, err := db.NewPool(ctx, dsn, int32(maxConns))
 	if err != nil {
-		log.Error("failed to listen", "err", err)
-		os.Exit(1)
+		log.Printf("warning: db connection failed (%v), continuing in degraded mode", err)
 	}
+
+	missionStore := db.NewMissionStore(pool)
+	runStore := db.NewRunStore(pool)
 
 	grpcServer := grpc.NewServer()
-	missionv1.RegisterMissionServiceServer(grpcServer, server.NewMissionServer(log))
+	srv := api.NewServer(missionStore, runStore)
+	missionv1.RegisterMissionServiceServer(grpcServer, srv)
 
 	healthSrv := health.NewServer()
 	healthv1.RegisterHealthServer(grpcServer, healthSrv)
-	healthSrv.SetServingStatus("recon.mission.v1.MissionService", healthv1.HealthCheckResponse_SERVING)
+	healthSrv.SetServingStatus("mission.v1.MissionService", healthv1.HealthCheckResponse_SERVING)
 
 	reflection.Register(grpcServer)
 
-	log.Info("mission-svc listening", "addr", addr)
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Error("grpc server stopped", "err", err)
-		os.Exit(1)
+	grpcAddr := ":" + grpcPort
+	lis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		log.Fatalf("failed to listen on gRPC port %s: %v", grpcPort, err)
+	}
+
+	go func() {
+		log.Printf("mission-svc gRPC listening on %s", grpcAddr)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("grpc server exited: %v", err)
+		}
+	}()
+
+	// Give gRPC server a moment to start before gateway dials localhost
+	time.Sleep(100 * time.Millisecond)
+
+	httpAddr := ":" + httpPort
+	log.Printf("mission-svc REST gateway listening on %s", httpAddr)
+	if err := api.RunGateway(ctx, "127.0.0.1:"+grpcPort, httpAddr); err != nil {
+		log.Fatalf("gateway server exited: %v", err)
 	}
 }
