@@ -1,0 +1,50 @@
+server:
+  replicaCount: 1
+  config:
+    persistence:
+      default:
+        driver: sql
+        sql:
+          driver: postgres12
+          host: postgresql.recon-datastores.svc.cluster.local
+          port: 5432
+          database: temporal
+          user: recon_app
+          existingSecret: temporal-postgres-credentials
+      visibility:
+        driver: sql
+        sql:
+          driver: postgres12
+          host: postgresql.recon-datastores.svc.cluster.local
+          port: 5432
+          database: temporal_visibility
+          user: recon_app
+          existingSecret: temporal-postgres-credentials
+
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+cassandra:
+  enabled: false
+elasticsearch:
+  enabled: false
+prometheus:
+  enabled: false
+grafana:
+  enabled: false
+
+web:
+  enabled: true
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8080
+
+schema:
+  createDatabase:
+    enabled: false
+  setup:
+    enabled: true
+  update:
+    enabled: true

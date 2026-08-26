@@ -1,0 +1,20 @@
+config:
+  cluster:
+    enabled: false
+  jetstream:
+    enabled: true
+    fileStore:
+      pvc:
+        enabled: true
+        storageClassName: recon-warm-hdd
+        size: 10Gi
+    memoryStore:
+      enabled: true
+      maxSize: 256Mi
+
+promExporter:
+  enabled: false
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { cpu: 500m, memory: 512Mi }
