@@ -29,7 +29,7 @@ class FrameQuality(BaseModel):
     quality_score: float  # composite 0-1, see day 12
     gps: Optional[GpsFix] = None
     status: Literal[
-        "kept", "dropped_blur", "dropped_exposure", "dropped_duplicate", "dropped_gps_jump"
+        "kept", "dropped_blur", "dropped_exposure", "dropped_duplicate", "dropped_gps_jump", "dropped_window"
     ]
 
 
