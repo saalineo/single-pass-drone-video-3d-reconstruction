@@ -36,7 +36,11 @@ async def apply_georeferencing(mission_id: str, attempt_id: str, aoi_centroid_lo
         params = helmert.load_helmert(mission_id, attempt_id)
         utm_crs = crs_utils.utm_crs_for_aoi(*aoi_centroid_lonlat)
 
-        scratch = Path(settings.scratch_dir) / activity.info().workflow_run_id / "georef"
+        try:
+            wf_run_id = activity.info().workflow_run_id
+        except Exception:
+            wf_run_id = attempt_id
+        scratch = Path(settings.scratch_dir) / wf_run_id / "georef"
         scratch.mkdir(parents=True, exist_ok=True)
         
         try:

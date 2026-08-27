@@ -36,24 +36,26 @@ def build_database(keyframe_manifest: KeyframeManifest, images_dir: Path, db_pat
     return db
 
 def extract_features(db_path: Path, images_dir: Path):
-    reader_options = pycolmap.ImageReaderOptions(camera_model="PINHOLE", single_camera=True)
+    reader_options = pycolmap.ImageReaderOptions(camera_model="PINHOLE")
     sift_options = pycolmap.SiftExtractionOptions(
-        use_gpu=True,
-        gpu_index="0",
         max_num_features=8192,
         first_octave=-1,
         peak_threshold=0.0067,
     )
+    extraction_options = pycolmap.FeatureExtractionOptions()
+    extraction_options.sift = sift_options
+
     pycolmap.extract_features(
         database_path=str(db_path),
         image_path=str(images_dir),
         camera_mode=pycolmap.CameraMode.SINGLE,
         reader_options=reader_options,
-        sift_options=sift_options,
+        extraction_options=extraction_options,
         device=pycolmap.Device.cuda if pycolmap.has_cuda else pycolmap.Device.cpu,
     )
 
-def write_pose_priors(db: pycolmap.Database, priors_manifest: PriorsManifest):
+def write_pose_priors(db_path: Path, priors_manifest: PriorsManifest):
+    db = pycolmap.Database.open(str(db_path))
     name_to_image_id = {img.name: img.image_id for img in db.read_all_images()}
     for prior in priors_manifest.priors:
         image_id = name_to_image_id.get(prior.image_name)
@@ -129,7 +131,7 @@ async def extract_and_match_features(payload: SfmFeaturesInput) -> SfmFeaturesOu
     activity.heartbeat("features extracted")
 
     if priors_manifest:
-        await loop.run_in_executor(None, write_pose_priors, db, priors_manifest)
+        await loop.run_in_executor(None, write_pose_priors, db_path, priors_manifest)
 
     strategy = choose_matching_strategy(priors_manifest, len(manifest.frames))
     activity.logger.info("matching strategy=%s num_images=%d", strategy, len(manifest.frames))
@@ -166,16 +168,28 @@ def redownload_database_snapshot(mission_id: str, attempt_id: str, sfm_dir: Path
 def run_incremental_mapping(db_path: Path, images_dir: Path, output_dir: Path) -> pycolmap.Reconstruction:
     options = pycolmap.IncrementalPipelineOptions()
     options.min_num_matches = 15
-    options.mapper.abs_pose_min_num_inliers = 30
-    options.mapper.use_prior_position = True
-    options.mapper.use_robust_loss_on_prior_position = True
+    options.min_model_size = 3
+    options.mapper.abs_pose_min_num_inliers = 15
     options.ba_refine_focal_length = True
     options.ba_refine_principal_point = False
+
+    db = pycolmap.Database.open(str(db_path))
+    if len(db.read_all_pose_priors()) > 0:
+        options.use_prior_position = True
+        options.use_robust_loss_on_prior_position = True
+    else:
+        options.use_prior_position = False
 
     reconstructions = pycolmap.incremental_mapping(
         database_path=str(db_path), image_path=str(images_dir), output_path=str(output_dir),
         options=options,
     )
+    if not reconstructions and options.use_prior_position:
+        options.use_prior_position = False
+        reconstructions = pycolmap.incremental_mapping(
+            database_path=str(db_path), image_path=str(images_dir), output_path=str(output_dir),
+            options=options,
+        )
     if not reconstructions:
         return None
     best = max(reconstructions.values(), key=lambda r: r.num_reg_images())
@@ -190,10 +204,10 @@ def mapping_diverged(reconstruction: pycolmap.Reconstruction, num_input_images: 
 
 def retry_with_relaxed_ransac(db_path: Path, images_dir: Path, output_dir: Path):
     options = pycolmap.IncrementalPipelineOptions()
-    options.mapper.abs_pose_min_num_inliers = 15
-    options.mapper.init_min_num_inliers = 50
-    options.mapper.use_prior_position = True
-    options.mapper.use_robust_loss_on_prior_position = True
+    options.min_model_size = 3
+    options.mapper.abs_pose_min_num_inliers = 10
+    options.mapper.init_min_num_inliers = 15
+    options.use_prior_position = False
     options.ba_refine_focal_length = True
     options.ba_refine_principal_point = False
     
@@ -208,52 +222,77 @@ def retry_with_relaxed_ransac(db_path: Path, images_dir: Path, output_dir: Path)
 def build_priors_only_reconstruction(priors_manifest: PriorsManifest, keyframe_manifest: KeyframeManifest) -> pycolmap.Reconstruction:
     return pycolmap.Reconstruction()
 
+def is_image_registered(image) -> bool:
+    if hasattr(image, "has_pose"):
+        return bool(image.has_pose)
+    if hasattr(image, "registered"):
+        return bool(image.registered)
+    return True
+
+def get_cam_from_world(image):
+    if callable(image.cam_from_world):
+        return image.cam_from_world()
+    return image.cam_from_world
+
 def extract_poses(reconstruction: pycolmap.Reconstruction) -> list[CameraPoseRecord]:
     poses = []
     if not reconstruction:
         return poses
     for image in reconstruction.images.values():
-        if not image.registered:
+        if not is_image_registered(image):
             continue
-        rigid = image.cam_from_world
+        rigid = get_cam_from_world(image)
         q = rigid.rotation.quat
         t = rigid.translation
+        num_obs = image.num_points3D() if callable(image.num_points3D) else image.num_points3D
         poses.append(CameraPoseRecord(
             image_name=image.name,
-            qvec_wxyz=(q[3], q[0], q[1], q[2]),
-            tvec=tuple(t), camera_id=image.camera_id,
-            num_observations=image.num_points3D(),
+            qvec_wxyz=(float(q[3]), float(q[0]), float(q[1]), float(q[2])),
+            tvec=(float(t[0]), float(t[1]), float(t[2])),
+            camera_id=image.camera_id,
+            num_observations=num_obs,
         ))
     return poses
 
 def enu_to_lla_fn(priors_manifest: PriorsManifest):
     from pyproj import Transformer
-    lat0, lon0, _ = priors_manifest.reference_origin_lla
-    t = Transformer.from_crs(
-        f"+proj=topocentric +ellps=WGS84 +lat_0={lat0} +lon_0={lon0} +h_0=0",
-        "EPSG:4979", always_xy=True
-    )
-    def to_lla(x, y, z):
-        lon, lat, alt = t.transform(x, y, z)
-        return lon, lat, alt
-    return to_lla
+    lat0, lon0, alt0 = priors_manifest.reference_origin_lla
+    try:
+        t = Transformer.from_pipeline(
+            f"+proj=pipeline +step +proj=topocentric +lat_0={lat0} +lon_0={lon0} +h_0={alt0} +ellps=WGS84 +inv +step +proj=cart +ellps=WGS84 +inv"
+        )
+        def to_lla(x, y, z):
+            lon, lat, alt = t.transform(x, y, z)
+            return float(lon), float(lat), float(alt)
+        return to_lla
+    except Exception:
+        def to_lla(x, y, z):
+            dlat = y / 111320.0
+            dlon = x / (111320.0 * np.cos(np.radians(lat0)))
+            return float(lon0 + dlon), float(lat0 + dlat), float(alt0 + z)
+        return to_lla
 
 def camera_centers_geojson(reconstruction, priors_manifest, enu_to_lla):
     features = []
     if not reconstruction:
         return {"type": "FeatureCollection", "features": features}
     for image in reconstruction.images.values():
-        if not image.registered:
+        if not is_image_registered(image):
             continue
-        center_enu = image.cam_from_world.inverse().translation
-        lon, lat, alt = enu_to_lla(*center_enu)
-        prior = next((p for p in priors_manifest.priors if p.image_name == image.name), None)
+        rigid = get_cam_from_world(image)
+        center_enu = rigid.inverse().translation
+        if enu_to_lla:
+            lon, lat, alt = enu_to_lla(*center_enu)
+        else:
+            lon, lat, alt = float(center_enu[0]), float(center_enu[1]), float(center_enu[2])
+        prior = next((p for p in priors_manifest.priors if p.image_name == image.name), None) if priors_manifest else None
+        num_obs = image.num_points3D() if callable(image.num_points3D) else image.num_points3D
         features.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [lon, lat, alt]},
             "properties": {
                 "image_name": image.name,
-                "num_observations": image.num_points3D(),
+                "num_observations": num_obs,
                 "prior_source": prior.source if prior else None,
             },
         })
@@ -272,9 +311,10 @@ def compute_helmert_alignment(reconstruction, priors_manifest: PriorsManifest) -
     src, dst = [], []
     for p in control:
         image = reconstruction.find_image_with_name(p.image_name)
-        if image is None or not image.registered:
+        if image is None or not is_image_registered(image):
             continue
-        src.append(np.array(image.cam_from_world.inverse().translation))
+        rigid = get_cam_from_world(image)
+        src.append(np.array(rigid.inverse().translation))
         dst.append(np.array(p.position_ecef_m))
         
     if len(src) < 3:
@@ -325,11 +365,14 @@ async def run_bundle_adjustment(payload: BundleAdjustmentInput) -> BundleAdjustm
     accuracy_warning = None
     if mapping_diverged(reconstruction, len(manifest.frames)):
         activity.logger.warning("mapping diverged, retrying with relaxed RANSAC")
-        reconstruction = await loop.run_in_executor(None, retry_with_relaxed_ransac, db_path, images_dir, output_dir)
+        retry_recon = await loop.run_in_executor(None, retry_with_relaxed_ransac, db_path, images_dir, output_dir)
         activity.heartbeat("relaxed-RANSAC retry complete")
+        if retry_recon is not None:
+            reconstruction = retry_recon
         if mapping_diverged(reconstruction, len(manifest.frames)):
             accuracy_warning = "sfm_divergence_fallback_to_priors"
-            reconstruction = await loop.run_in_executor(None, build_priors_only_reconstruction, priors_manifest, manifest)
+            if reconstruction is None:
+                reconstruction = await loop.run_in_executor(None, build_priors_only_reconstruction, priors_manifest, manifest)
 
     if reconstruction:
         poses = await loop.run_in_executor(None, extract_poses, reconstruction)
@@ -353,9 +396,9 @@ async def run_bundle_adjustment(payload: BundleAdjustmentInput) -> BundleAdjustm
         except InsufficientControlPointsError as e:
             accuracy_warning = f"helmert_alignment_skipped: {e}"
 
-    if priors_manifest:
-        geojson = await loop.run_in_executor(None, camera_centers_geojson, reconstruction, priors_manifest, enu_to_lla_fn(priors_manifest))
-        await loop.run_in_executor(None, put_json, f"{prefix}/camera_centers.geojson", geojson)
+    enu_fn = enu_to_lla_fn(priors_manifest) if priors_manifest else None
+    geojson = await loop.run_in_executor(None, camera_centers_geojson, reconstruction, priors_manifest, enu_fn)
+    await loop.run_in_executor(None, put_json, f"{prefix}/camera_centers.geojson", geojson)
 
     num_reg_images = reconstruction.num_reg_images() if hasattr(reconstruction, "num_reg_images") else 0
     num_points3D = reconstruction.num_points3D() if hasattr(reconstruction, "num_points3D") else 0

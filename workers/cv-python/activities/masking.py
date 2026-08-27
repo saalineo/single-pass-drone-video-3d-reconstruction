@@ -100,7 +100,8 @@ def process_and_upload(payload, manifest, set_id, predictor, processor, detector
     for idx, frame in enumerate(manifest.frames):
         by_class = merge_and_dilate(masks_by_frame.get(idx, {}), active_objects)
         coverage = coverage_flag_for_frame(by_class)
-        paq_key = f"masks/{set_id}/{frame.frame_id:06d}.paq"
+        fid = int(frame.frame_id) if isinstance(frame.frame_id, int) or str(frame.frame_id).isdigit() else idx
+        paq_key = f"masks/{set_id}/{fid:06d}.paq"
         
         paq_bytes = encode_mask_paq(frame.width, frame.height, by_class)
         upload_bytes(paq_bytes, f"missions/{payload.mission_id}/{paq_key}")
@@ -114,8 +115,9 @@ def process_and_upload(payload, manifest, set_id, predictor, processor, detector
 
 @activity.defn(name="ActivityMasking")
 async def run_masking(payload: StageInput) -> StageOutput:
+    uri = payload.input_uris[0] if payload.input_uris else payload.params.get("keyframe_manifest_uri", "")
     out = await mask_dynamic_objects(MaskingInput(
-        mission_id=payload.mission_id, run_id=payload.run_id, keyframe_manifest_uri=payload.input_uris[0],
+        mission_id=payload.mission_id, run_id=payload.run_id, keyframe_manifest_uri=uri,
     ))
     return StageOutput(output_uri=out.mask_manifest_uri, output_hash=out.set_id)
 

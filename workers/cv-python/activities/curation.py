@@ -278,25 +278,38 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
     threshold_passed = [f for f in all_scored if f.status == "kept"]
     selected = select_keyframes(threshold_passed)
 
-    selected_ids = {id(f) for f in selected}
+    selected_keys = {f.object_key for f in selected if f.object_key}
     for f in all_scored:
-        if f.status == "kept" and id(f) not in selected_ids:
-            f.status = "dropped_window"
-            if f.object_key and Path(f.object_key).exists():
-                Path(f.object_key).unlink()
+        if f.status == "kept":
+            if f.object_key not in selected_keys:
+                f.status = "dropped_window"
+                if f.object_key and Path(f.object_key).exists():
+                    try:
+                        Path(f.object_key).unlink()
+                    except Exception:
+                        pass
 
     stats = {"dropped_total": 0}
     kept_frames = []
     global_frame_idx = 0
     for f in all_scored:
         if f.status == "kept":
+            temp_path = Path(f.object_key)
+            if not temp_path.exists():
+                f.status = "dropped_window"
+                stats[f.status] = stats.get(f.status, 0) + 1
+                stats["dropped_total"] += 1
+                continue
+
             frame_id = f"{global_frame_idx:06d}"
             f.frame_id = frame_id
             object_key = f"missions/{payload.mission_id}/keyframes/{set_id}/{frame_id}.jpg"
 
-            temp_path = Path(f.object_key)
             await loop.run_in_executor(None, upload_from, temp_path, object_key)
-            temp_path.unlink()
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
 
             f.object_key = object_key
             kept_frames.append(f)

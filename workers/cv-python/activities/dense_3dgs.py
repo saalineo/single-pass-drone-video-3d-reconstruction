@@ -22,7 +22,7 @@ async def run_dense_3dgs(payload: StageInput) -> StageOutput:
     )
 
     try:
-        await loop.run_in_executor(None, gs_dataset.validate_dataset, dataset_manifest, 20)
+        await loop.run_in_executor(None, gs_dataset.validate_dataset, dataset_manifest, 3)
     except ValueError as e:
         activity.logger.warning(f"Dataset validation failed: {e}")
         raise

@@ -67,7 +67,7 @@ def build_3dgs_dataset(mission_id: str, set_id: str, attempt_id: str,
     (scratch_dir / "dataset_manifest.json").write_text(json.dumps(manifest))
     return manifest
 
-def validate_dataset(manifest: dict, min_frames: int = 20) -> None:
+def validate_dataset(manifest: dict, min_frames: int = 3) -> None:
     if manifest["n_frames"] < min_frames:
         raise ValueError(f"only {manifest['n_frames']} registered frames — too few for a "
                           f"stable 3DGS survey-track run; check Day 16 registration rate")

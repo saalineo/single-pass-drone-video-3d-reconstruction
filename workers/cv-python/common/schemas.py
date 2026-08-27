@@ -92,7 +92,7 @@ class SfmResult(BaseModel):
     ba_final_cost: float
     poses_uri: str  # poses/{attempt_id}/model/images.txt
     points_uri: str  # poses/{attempt_id}/model/points3D.txt
-    alignment: AlignmentParams
+    alignment: AlignmentParams | None = None
 
 
 class MaskRecord(BaseModel):

@@ -38,14 +38,14 @@ def nearest_or_interpolate(records: list[dict], ts: datetime, max_gap_s: float =
         return None
     before, after = records[idx], records[idx + 1]
     t0, t1 = times[idx], times[idx + 1]
-    
+
     if (ts - t0).total_seconds() > max_gap_s and (after["t"] == before["t"] or (t1 - ts).total_seconds() > max_gap_s):
         return None
-        
+
     delta_total = (t1 - t0).total_seconds()
     if delta_total == 0:
         return before
-        
+
     frac = (ts - t0).total_seconds() / delta_total
     interpolated = {}
     for k in before:
@@ -76,17 +76,29 @@ def build_fix(gps_rec, ppk_rec, baro_rec) -> GpsFix | None:
                   horizontal_sigma_m=sh, vertical_sigma_m=sv)
 
 def make_transformers(origin_lla: tuple[float, float, float]):
-    lat0, lon0, _ = origin_lla
+    lat0, lon0, alt0 = origin_lla
     ecef = Transformer.from_crs("EPSG:4979", "EPSG:4978", always_xy=True)
-    enu = Transformer.from_crs(
-        "EPSG:4979", f"+proj=topocentric +ellps=WGS84 +lat_0={lat0} +lon_0={lon0} +h_0=0",
-        always_xy=True,
-    )
-    return ecef, enu
+    x0, y0, z0 = ecef.transform(lon0, lat0, alt0)
+
+    phi = math.radians(lat0)
+    lam = math.radians(lon0)
+    sin_phi, cos_phi = math.sin(phi), math.cos(phi)
+    sin_lam, cos_lam = math.sin(lam), math.cos(lam)
+
+    class EnuTransformer:
+        def transform(self, lon: float, lat: float, alt: float) -> tuple[float, float, float]:
+            x, y, z = ecef.transform(lon, lat, alt)
+            dx, dy, dz = x - x0, y - y0, z - z0
+            e = -sin_lam * dx + cos_lam * dy
+            n = -sin_phi * cos_lam * dx - sin_phi * sin_lam * dy + cos_phi * dz
+            u = cos_phi * cos_lam * dx + cos_phi * sin_lam * dy + sin_phi * dz
+            return float(e), float(n), float(u)
+
+    return ecef, EnuTransformer()
 
 def to_ecef(t: Transformer, lat, lon, alt) -> tuple[float, float, float]:
     x, y, z = t.transform(lon, lat, alt)
-    return x, y, z
+    return float(x), float(y), float(z)
 
 def first_valid_fix_lla(keyframe_manifest: KeyframeManifest, gps_log, ppk_log) -> tuple[float, float, float]:
     for frame in keyframe_manifest.frames:
@@ -158,14 +170,14 @@ def upload_text(key: str, content: str):
 async def parse_vio_warm_start(payload: VioParseInput) -> VioParseOutput:
     scratch = Path(settings.scratch_dir) / payload.run_id / "vio_parse"
     scratch.mkdir(parents=True, exist_ok=True)
-    
+
     manifest_key = key_from_uri(payload.keyframe_manifest_uri)
     manifest = KeyframeManifest.model_validate(get_json(manifest_key))
-    
+
     gps_path = safe_download(f"missions/{payload.mission_id}/raw/telemetry/gps.log", scratch / "gps.log")
     ppk_path = safe_download(f"missions/{payload.mission_id}/raw/telemetry/ppk.log", scratch / "ppk.log")
     baro_path = safe_download(f"missions/{payload.mission_id}/raw/telemetry/baro.log", scratch / "baro.log")
-    
+
     gps_log = load_jsonl(gps_path) if gps_path else []
     ppk_log = load_jsonl(ppk_path) if ppk_path else []
     baro_log = load_jsonl(baro_path) if baro_path else []
@@ -174,7 +186,7 @@ async def parse_vio_warm_start(payload: VioParseInput) -> VioParseOutput:
     for p in (gps_path, ppk_path, baro_path):
         if p and p.exists():
             telemetry_hashes.append(sha256_file(p))
-            
+
     full_hash, attempt_id = compute_attempt_id(payload.mission_id, manifest.input_content_hash, telemetry_hashes, "v1")
     priors_key = f"missions/{payload.mission_id}/poses/{attempt_id}/priors/pose_priors.json"
 
@@ -194,7 +206,7 @@ async def parse_vio_warm_start(payload: VioParseInput) -> VioParseOutput:
     priors_manifest = build_priors_manifest(payload.mission_id, attempt_id, full_hash, manifest, gps_log, ppk_log, baro_log, target_epsg)
     uri = put_json(priors_key, priors_manifest.model_dump(mode="json"))
 
-    # TODO(day-14): load intrinsics from flight_sessions API
+    # TODO: load intrinsics from flight_sessions API
     intrinsics = {
         "width": 3840, "height": 2160,
         "fx": 2000.0, "fy": 2000.0,

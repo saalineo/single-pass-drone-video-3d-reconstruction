@@ -24,7 +24,7 @@ def load_sparse_model(mission_id: str, attempt_id: str, scratch_dir: Path) -> py
 
 def list_registered_images(sparse: pycolmap.Reconstruction) -> list[int]:
     if not sparse: return []
-    return [img_id for img_id, img in sparse.images.items() if img.registered]
+    return [img_id for img_id, img in sparse.images.items() if (img.has_pose if hasattr(img, "has_pose") else getattr(img, "registered", True))]
 
 def visible_sparse_points(sparse: pycolmap.Reconstruction, image_id: int) -> tuple[np.ndarray, np.ndarray]:
     if not sparse or image_id not in sparse.images:

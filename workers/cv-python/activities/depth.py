@@ -49,7 +49,7 @@ async def infer_metric_depth(mission_id: str, set_id: str, attempt_id: str) -> d
         uv, xyz = await loop.run_in_executor(None, colmap_io.visible_sparse_points, sparse, frame_id)
         
         image = sparse.images[frame_id]
-        rigid = image.cam_from_world
+        rigid = image.cam_from_world() if callable(image.cam_from_world) else image.cam_from_world
         R = rigid.rotation.matrix()
         t = rigid.translation
         pose = colmap_io.PoseWrapper(R, t)

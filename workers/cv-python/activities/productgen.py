@@ -32,16 +32,25 @@ async def run_product_gen(payload: StageInput) -> StageOutput:
     loop = asyncio.get_running_loop()
     mission_id = payload.mission_id
     attempt_id = payload.params.get("attempt_id", payload.input_hash)
-    scratch_dir = Path(settings.scratch_dir) / activity.info().workflow_run_id / "products"
+    try:
+        wf_run_id = activity.info().workflow_run_id
+    except Exception:
+        wf_run_id = payload.run_id
+    scratch_dir = Path(settings.scratch_dir) / wf_run_id / "products"
     scratch_dir.mkdir(parents=True, exist_ok=True)
     products_prefix = f"missions/{mission_id}/products"
 
-    #  Mesh
+    #  Mesh (O-1)
     mesh_key = f"missions/{mission_id}/mesh/lod0/model.glb"
     o1_key = f"{products_prefix}/O-1/mesh.glb"
     o1_written = await loop.run_in_executor(None, _copy_if_exists, mesh_key, o1_key)
 
-    #  Report
+    # Trajectory (O-5)
+    traj_key = f"missions/{mission_id}/poses/{attempt_id}/camera_centers.geojson"
+    o5_key = f"{products_prefix}/O-5/trajectory.geojson"
+    o5_written = await loop.run_in_executor(None, _copy_if_exists, traj_key, o5_key)
+
+    #  Report (O-7)
     o7_src_key = f"{products_prefix}/O-7/qa_report.json"
     o7_present = await loop.run_in_executor(None, object_exists, o7_src_key)
 
@@ -174,6 +183,7 @@ async def run_product_gen(payload: StageInput) -> StageOutput:
         output_hash=attempt_id,
         metrics={
             "o1_written": float(o1_written),
+            "o5_written": float(o5_written),
             "o7_present": float(o7_present),
             "o2_points": float(n_points_laz),
             "pct_high_confidence": float(coverage_stats.get("pct_high_confidence", 0.0)),

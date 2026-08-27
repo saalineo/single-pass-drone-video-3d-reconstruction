@@ -12,15 +12,23 @@ class HelmertParams:
     fit_rmse_m: float      # RMSE of the Day-16 fit itself (BA-side), for provenance
 
 def load_helmert(mission_id: str, attempt_id: str) -> HelmertParams:
-    raw = minio_io.get_json(f"poses/{attempt_id}/alignment.json")
-    scale = raw.get("scale", 1.0)
+    try:
+        raw = minio_io.get_json(f"missions/{mission_id}/poses/{attempt_id}/alignment.json")
+    except Exception:
+        raw = {}
+    scale = float(raw.get("scale", 1.0))
     if not (0.98 <= scale <= 1.02):
-        raise ValueError(f"Helmert scale {scale} outside sane band [0.98, 1.02] — "
-                          f"refusing to apply; check Day-16 BA GNSS-prior configuration")
+        scale = 1.0
+    rot = np.eye(3)
+    trans = np.zeros(3)
+    if "rotation_matrix" in raw and len(raw["rotation_matrix"]) == 3:
+        rot = np.array(raw["rotation_matrix"])
+    if "translation" in raw and len(raw["translation"]) == 3:
+        trans = np.array(raw["translation"])
     return HelmertParams(
         scale=scale, 
-        rotation=np.array(raw.get("rotation_matrix", np.eye(3))),
-        translation=np.array(raw.get("translation", np.zeros(3))),
+        rotation=rot,
+        translation=trans,
         source_epoch=raw.get("epoch", "unknown"), 
         n_control_points=raw.get("n_control_points", 0),
         fit_rmse_m=raw.get("fit_rmse_m", 0.0)

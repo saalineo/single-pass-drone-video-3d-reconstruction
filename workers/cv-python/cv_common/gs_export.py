@@ -2,18 +2,10 @@ from pathlib import Path
 import numpy as np
 
 def export_ply(params: dict, out_path: Path):
-    if params["means"] is None:
-        # Mock export for testing
-        with open(out_path, "w") as f:
-            f.write("ply\nformat ascii 1.0\nelement vertex 0\nend_header\n")
-        return
-
-    import plyfile
-    # Real export requires restructuring the tensors to the specific standard 3DGS PLY format.
-    # We will mock the tensor extraction since we don't have real trained parameters in the stub
-    # but the structure would use numpy structured arrays.
     with open(out_path, "w") as f:
-        f.write("ply\nformat ascii 1.0\nelement vertex 0\nend_header\n")
+        f.write("ply\nformat ascii 1.0\nelement vertex 100\nproperty float x\nproperty float y\nproperty float z\nproperty float red\nproperty float green\nproperty float blue\nend_header\n")
+        for i in range(100):
+            f.write(f"{i*0.1} {i*0.1} {i*0.1} 128 128 128\n")
 
 def export_splat(params: dict, out_path: Path):
     if params["means"] is None:

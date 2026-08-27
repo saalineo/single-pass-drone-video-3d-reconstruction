@@ -61,7 +61,7 @@ async def build_mesh_and_audit(mission_id: str, attempt_id: str, gsd_m: float,
             textured = texture_bake.bake(lod_mesh, mission_id)
             glb_path = f"/tmp/mesh_lod{i}.glb"
             textured.export(glb_path)
-            minio_io.put_file(glb_path, f"mesh/lod{i}/model.glb")
+            minio_io.put_file(glb_path, f"missions/{mission_id}/mesh/lod{i}/model.glb")
         return len(lods)
 
     lods_written = await loop.run_in_executor(None, process_mesh, mesh)
