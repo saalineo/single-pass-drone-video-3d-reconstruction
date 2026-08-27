@@ -1,3 +1,4 @@
+import os
 import torch
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 import numpy as np

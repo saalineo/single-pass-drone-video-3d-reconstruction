@@ -26,7 +26,7 @@ type MockResult struct {
 
 func main() {
 	missionAddr := flag.String("mission-addr", "localhost:50051", "mission-svc gRPC address")
-	ingestAddr := flag.String("ingest-addr", "localhost:50051", "ingest-svc gRPC address")
+	ingestAddr := flag.String("ingest-addr", "localhost:50052", "ingest-svc gRPC address")
 	videoFile := flag.String("video", "scripts/tests/testdata/fake_segment.mp4", "video segment file path")
 	preset := flag.String("preset", "standard", "reconstruction preset")
 	existingMissionID := flag.String("mission-id", "", "optional existing mission ID to reuse for idempotency testing")

@@ -23,6 +23,9 @@ func (s *RunStore) CreateRun(ctx context.Context, missionID, preset string) (run
 	if preset == "" {
 		preset = "standard"
 	}
+	if s.pool == nil {
+		return id.String(), wfID, nil
+	}
 
 	const q = `
 		INSERT INTO pipeline_runs (id, mission_id, temporal_workflow_id, preset, started_at)

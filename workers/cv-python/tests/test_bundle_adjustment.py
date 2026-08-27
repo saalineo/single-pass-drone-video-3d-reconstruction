@@ -25,4 +25,4 @@ def test_diverged_mapping_triggers_relaxed_retry():
 
 def test_pycolmap_options_hasattr():
     # CI gate assertion
-    assert hasattr(pycolmap.IncrementalPipelineOptions().mapper, "use_prior_position")
+    assert hasattr(pycolmap.IncrementalPipelineOptions(), "use_prior_position")

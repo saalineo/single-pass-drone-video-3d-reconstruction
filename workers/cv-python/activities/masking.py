@@ -6,8 +6,8 @@ import torch
 
 from temporalio import activity
 
-from common.schemas import MaskingInput, MaskingOutput, KeyframeManifest, MaskManifest, MaskRecord
-from common.object_store import object_exists, get_json, download_to, put_json, upload_bytes
+from common.schemas import MaskingInput, MaskingOutput, KeyframeManifest, MaskManifest, MaskRecord, StageInput, StageOutput
+from common.object_store import object_exists, get_json, download_to, put_json, upload_bytes, key_from_uri
 from common.idempotency import stage_input_hash
 from common.config import settings
 from common.mask_codec import encode_mask_paq, CLASS_TABLE
@@ -19,13 +19,6 @@ PROMPT = "vehicle. person. animal. boat. aircraft."
 BOX_THRESHOLD, TEXT_THRESHOLD = 0.30, 0.25
 RESEED_INTERVAL = 15
 DILATION_MARGIN_PX = 5
-
-def _key_from_uri(uri: str) -> str:
-    if uri.startswith("s3://"):
-        parts = uri.split("/", 3)
-        if len(parts) == 4:
-            return parts[3]
-    return uri
 
 def frame_filename(frame) -> str:
     return Path(frame.object_key).name
@@ -119,11 +112,18 @@ def process_and_upload(payload, manifest, set_id, predictor, processor, detector
         ))
     return records
 
-@activity.defn(name="mask_dynamic_objects")
+@activity.defn(name="ActivityMasking")
+async def run_masking(payload: StageInput) -> StageOutput:
+    out = await mask_dynamic_objects(MaskingInput(
+        mission_id=payload.mission_id, run_id=payload.run_id, keyframe_manifest_uri=payload.input_uris[0],
+    ))
+    return StageOutput(output_uri=out.mask_manifest_uri, output_hash=out.set_id)
+
+
 async def mask_dynamic_objects(payload: MaskingInput) -> MaskingOutput:
     loop = asyncio.get_running_loop()
     
-    manifest_key = _key_from_uri(payload.keyframe_manifest_uri)
+    manifest_key = key_from_uri(payload.keyframe_manifest_uri)
     manifest = KeyframeManifest.model_validate(await loop.run_in_executor(None, get_json, manifest_key))
     full_hash = stage_input_hash(payload.mission_id, manifest.input_content_hash, MASKING_MODEL_VERSION, MASKING_CONFIG_VERSION)
     set_id = manifest.set_id

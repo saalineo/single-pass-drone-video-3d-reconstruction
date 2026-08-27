@@ -5,6 +5,7 @@ import numpy as np
 from temporalio import activity
 from cv_common import helmert, crs_utils, minio_io
 from common.config import settings
+from common.schemas import StageInput, StageOutput
 
 def nearest_reconstructed_point(local_xyz, params, utm_crs):
     xyz_ecef = helmert.apply_helmert(np.array([local_xyz]), params)
@@ -12,6 +13,22 @@ def nearest_reconstructed_point(local_xyz, params, utm_crs):
     return xyz_utm[0]
 
 @activity.defn(name="ActivityGeoref")
+async def run_georef(payload: StageInput) -> StageOutput:
+    aoi_lonlat = (
+        float(payload.params.get("aoi_centroid_lon", "0")),
+        float(payload.params.get("aoi_centroid_lat", "0")),
+    )
+    report = await apply_georeferencing(payload.mission_id, payload.params["attempt_id"], aoi_lonlat)
+    return StageOutput(
+        output_uri=f"s3://{settings.bucket}/missions/{payload.mission_id}/products/O-7/qa_report.json",
+        output_hash=payload.params["attempt_id"],
+        metrics={
+            "checkpoint_rmse_horizontal_m": report["checkpoint_rmse_horizontal_m"],
+            "checkpoint_rmse_vertical_m": report["checkpoint_rmse_vertical_m"],
+        },
+    )
+
+
 async def apply_georeferencing(mission_id: str, attempt_id: str, aoi_centroid_lonlat: tuple) -> dict:
     loop = asyncio.get_running_loop()
     

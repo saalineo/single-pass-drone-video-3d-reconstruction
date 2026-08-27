@@ -35,7 +35,7 @@ class FrameQuality(BaseModel):
 
 class KeyframeManifest(BaseModel):
     mission_id: str
-    set_id: str  # == input_content_hash[:16]; doubles as the idempotency key
+    set_id: str  # input_content_hash[:16]; doubles as the idempotency key
     input_content_hash: str
     curation_config_version: str
     generated_at: datetime
@@ -150,8 +150,7 @@ class SfmFeaturesInput(BaseModel):
 class SfmFeaturesOutput(BaseModel):
     mission_id: str
     attempt_id: str
-    database_uri: str  # scratch-local path reference, see day 15
-
+    database_uri: str  # scratch-local path reference,
 
 class BundleAdjustmentInput(BaseModel):
     mission_id: str
@@ -177,3 +176,22 @@ class MaskingOutput(BaseModel):
     mission_id: str
     set_id: str
     mask_manifest_uri: str
+
+
+# Generic Temporal activity envelope — the shape every activity actually receives from
+# the Go workflow (workflows/reconstruction/activities.go StageInput/StageOutput).
+# Field names must match the Go struct's json tags exactly.
+
+class StageInput(BaseModel):
+    mission_id: str
+    run_id: str
+    stage: str
+    input_hash: str
+    input_uris: list[str] = []
+    params: dict[str, str] = {}
+
+
+class StageOutput(BaseModel):
+    output_uri: str
+    output_hash: str
+    metrics: dict[str, float] = {}

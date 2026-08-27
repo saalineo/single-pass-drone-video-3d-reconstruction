@@ -1,13 +1,9 @@
 import numpy as np
 import pycolmap
 from common.object_store import download_to
+from cv_common.depth_align import PoseWrapper
 from pathlib import Path
 import os
-
-class PoseWrapper:
-    def __init__(self, R, t):
-        self.R = R
-        self.t = t
 
 def load_sparse_model(mission_id: str, attempt_id: str, scratch_dir: Path) -> pycolmap.Reconstruction:
     model_dir = scratch_dir / "model"

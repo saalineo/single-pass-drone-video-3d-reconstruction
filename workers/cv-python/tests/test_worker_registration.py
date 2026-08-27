@@ -3,8 +3,8 @@ from temporalio.testing import WorkflowEnvironment
 import pytest
 
 EXPECTED = {
-    "curate_keyframes", "parse_vio_warm_start",
-    "extract_and_match_features", "run_bundle_adjustment", "mask_dynamic_objects",
+    "ActivityCuration", "ActivitySfM", "ActivityMasking", "ActivityDepth",
+    "ActivityDense3DGS", "ActivityMeshing", "ActivityGeoref", "ActivityProductGen",
 }
 
 @pytest.mark.asyncio

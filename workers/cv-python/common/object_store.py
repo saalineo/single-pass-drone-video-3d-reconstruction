@@ -28,15 +28,21 @@ def object_exists(key: str) -> bool:
         return False
 
 
-def download_to(key: str, local_path: Path) -> Path:
+def download_to(key: str, local_path: Path, bucket: str | None = None) -> Path:
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    get_client().download_file(settings.bucket, key, str(local_path))
+    get_client().download_file(bucket or settings.bucket, key, str(local_path))
     return local_path
 
 
 def upload_from(local_path: Path, key: str) -> str:
     get_client().upload_file(str(local_path), settings.bucket, key)
     return f"s3://{settings.bucket}/{key}"
+
+
+def upload_bytes(data: bytes, key: str) -> str:
+    get_client().put_object(Bucket=settings.bucket, Key=key, Body=io.BytesIO(data))
+    return f"s3://{settings.bucket}/{key}"
+
 
 
 def put_json(key: str, obj: dict) -> str:
@@ -56,3 +62,12 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def key_from_uri(uri: str) -> str:
+    if uri.startswith("s3://"):
+        parts = uri.split("/", 3)
+        if len(parts) == 4:
+            return parts[3]
+    return uri
+

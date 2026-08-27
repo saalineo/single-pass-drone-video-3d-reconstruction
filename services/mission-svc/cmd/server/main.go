@@ -70,7 +70,7 @@ func main() {
 
 	httpAddr := ":" + httpPort
 	log.Printf("mission-svc REST gateway listening on %s", httpAddr)
-	if err := api.RunGateway(ctx, "127.0.0.1:"+grpcPort, httpAddr); err != nil {
+	if err := api.RunGateway(ctx, "127.0.0.1:"+grpcPort, httpAddr, missionStore); err != nil {
 		log.Fatalf("gateway server exited: %v", err)
 	}
 }

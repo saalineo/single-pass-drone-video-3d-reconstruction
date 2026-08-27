@@ -9,6 +9,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	ingestv1 "github.com/single-pass-recon/ingest-svc/gen/ingest/v1"
 	"github.com/single-pass-recon/ingest-svc/server"
+	"go.temporal.io/sdk/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
@@ -23,7 +24,7 @@ func getEnvOrDefault(key, fallback string) string {
 }
 
 func main() {
-	endpoint := getEnvOrDefault("MINIO_ENDPOINT", "minio.recon-datastores.svc.cluster.local:9000")
+	endpoint := getEnvOrDefault("MINIO_ENDPOINT", "localhost:9000")
 	accessKey := os.Getenv("MINIO_ACCESS_KEY")
 	secretKey := os.Getenv("MINIO_SECRET_KEY")
 	useTLS := os.Getenv("MINIO_USE_TLS") == "true"
@@ -41,7 +42,16 @@ func main() {
 	store := server.NewVideoStore(&server.MinioWrapper{Client: mc}, bucket)
 	grpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(8 << 20)) // 8 MiB max recv message
 
-	srv := server.NewIngestServer(store, nil)
+	temporalHostPort := getEnvOrDefault("TEMPORAL_HOST_PORT", "localhost:7233")
+	temporalNamespace := getEnvOrDefault("TEMPORAL_NAMESPACE", "recon")
+	temporalClient, err := client.Dial(client.Options{HostPort: temporalHostPort, Namespace: temporalNamespace})
+	if err != nil {
+		log.Fatalf("temporal client: %v", err)
+	}
+	defer temporalClient.Close()
+
+	launcher := &server.TemporalWorkflowLauncher{Client: temporalClient, Store: store}
+	srv := server.NewIngestServer(store, launcher)
 	ingestv1.RegisterIngestServiceServer(grpcServer, srv)
 
 	healthSrv := health.NewServer()

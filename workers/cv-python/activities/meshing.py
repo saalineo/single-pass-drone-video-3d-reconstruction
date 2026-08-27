@@ -1,6 +1,11 @@
 from temporalio import activity
 import asyncio
+import numpy as np
 from cv_common import poisson_mesh, texture_bake, dsm_audit, mvs_client, minio_io, gs_export
+from common.config import settings
+from common.schemas import StageInput, StageOutput
+
+DEFAULT_GSD_M = 0.05
 
 async def _run_mvs_densify(mission_id: str, attempt_id: str) -> dict:
     densify_result = await mvs_client.run_densify(mission_id, attempt_id)
@@ -8,6 +13,23 @@ async def _run_mvs_densify(mission_id: str, attempt_id: str) -> dict:
     return {"dense_cloud_uri": "dense/mvs/dense_cloud.ply", "n_points": densify_result.n_points}
 
 @activity.defn(name="ActivityMeshing")
+async def run_meshing(payload: StageInput) -> StageOutput:
+    out = await build_mesh_and_audit(
+        payload.mission_id, payload.params["attempt_id"],
+        float(payload.params.get("gsd_m", DEFAULT_GSD_M)),
+        payload.params.get("road_mask_uri", ""),
+    )
+    return StageOutput(
+        output_uri=f"s3://{settings.bucket}/missions/{payload.mission_id}/mesh/lod0/model.glb",
+        output_hash=payload.params["attempt_id"],
+        metrics={
+            "n_fallback_tiles": float(out["n_fallback_tiles"]),
+            "n_total_tiles": float(out["n_total_tiles"]),
+            "lods_written": float(out["lods_written"]),
+        },
+    )
+
+
 async def build_mesh_and_audit(mission_id: str, attempt_id: str, gsd_m: float,
                                 road_mask_uri: str) -> dict:
     loop = asyncio.get_running_loop()

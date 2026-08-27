@@ -11,8 +11,8 @@ import asyncio
 
 from temporalio import activity
 
-from common.schemas import CurationInput, CurationOutput, KeyframeManifest, FrameQuality, GpsFix
-from common.object_store import object_exists, get_json, download_to, upload_from, put_json, sha256_file
+from common.schemas import CurationInput, CurationOutput, KeyframeManifest, FrameQuality, GpsFix, StageInput, StageOutput
+from common.object_store import object_exists, get_json, download_to, upload_from, put_json, sha256_file, key_from_uri
 from common.idempotency import stage_input_hash, short_id
 from common.config import settings
 
@@ -195,7 +195,18 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
     cap.release()
     return results
 
-@activity.defn(name="curate_keyframes")
+@activity.defn(name="ActivityCuration")
+async def run_curation(payload: StageInput) -> StageOutput:
+    out = await curate_keyframes(CurationInput(
+        mission_id=payload.mission_id, run_id=payload.run_id,
+        video_segment_keys=[key_from_uri(u) for u in payload.input_uris],
+    ))
+    return StageOutput(
+        output_uri=out.manifest_uri, output_hash=out.set_id,
+        metrics={"num_kept": float(out.num_kept), "num_dropped": float(out.num_dropped)},
+    )
+
+
 async def curate_keyframes(payload: CurationInput) -> CurationOutput:
     scratch = Path(settings.scratch_dir) / payload.run_id / "curation"
     scratch.mkdir(parents=True, exist_ok=True)
@@ -205,7 +216,9 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
     segment_hashes = []
     local_segments = []
     for key in payload.video_segment_keys:
-        local = await loop.run_in_executor(None, download_to, key, scratch / Path(key).name)
+        local = await loop.run_in_executor(
+            None, lambda k=key: download_to(k, scratch / Path(k).name, bucket=settings.raw_bucket)
+        )
         hash_val = await loop.run_in_executor(None, sha256_file, local)
         segment_hashes.append(hash_val)
         local_segments.append(local)

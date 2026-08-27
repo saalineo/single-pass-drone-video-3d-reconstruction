@@ -234,10 +234,10 @@ func TestWorkflowStallGracefullyWithoutCVWorker(t *testing.T) {
 	)
 
 	input := recon.ReconstructionWorkflowInput{
-		MissionID:        "m-stall-test",
-		RunID:            "r-stall-test",
-		Preset:           "standard",
-		InputManifestURI: "s3://recon-raw/missions/m-stall-test/raw/video/manifest.json",
+		MissionID: "m-stall-test",
+		RunID:     "r-stall-test",
+		Preset:    "standard",
+		InputURIs: []string{"s3://recon-raw/missions/m-stall-test/raw/video/manifest.json"},
 	}
 
 	env.ExecuteWorkflow(recon.ReconstructionWorkflow, input)

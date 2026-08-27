@@ -9,8 +9,18 @@ from cv2 import resize, INTER_NEAREST
 
 from cv_common import colmap_io, depth_models, depth_align, minio_io
 from common.config import settings
+from common.schemas import StageInput, StageOutput
 
 @activity.defn(name="ActivityDepth")
+async def run_depth(payload: StageInput) -> StageOutput:
+    out = await infer_metric_depth(payload.mission_id, payload.params["set_id"], payload.params["attempt_id"])
+    return StageOutput(
+        output_uri=f"s3://{settings.bucket}/missions/{payload.mission_id}/depth/{out['set_id']}/manifest.json",
+        output_hash=payload.params["attempt_id"],
+        metrics={"n_aligned": float(out["n_aligned"]), "n_total": float(out["n_total"])},
+    )
+
+
 async def infer_metric_depth(mission_id: str, set_id: str, attempt_id: str) -> dict:
     loop = asyncio.get_running_loop()
     activity.logger.info(f"depth inference start mission={mission_id} set={set_id}")

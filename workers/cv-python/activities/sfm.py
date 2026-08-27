@@ -7,10 +7,11 @@ from collections import Counter
 from temporalio import activity
 import pycolmap
 
-from common.schemas import SfmFeaturesInput, SfmFeaturesOutput, BundleAdjustmentInput, BundleAdjustmentOutput, KeyframeManifest, PriorsManifest, CameraPoseRecord, AlignmentParams, SfmResult
+from common.schemas import SfmFeaturesInput, SfmFeaturesOutput, BundleAdjustmentInput, BundleAdjustmentOutput, KeyframeManifest, PriorsManifest, CameraPoseRecord, AlignmentParams, SfmResult, VioParseInput, StageInput, StageOutput
 from common.config import settings
-from common.object_store import object_exists, get_json, download_to, put_json, upload_from
+from common.object_store import object_exists, get_json, download_to, put_json, upload_from, key_from_uri
 from common.idempotency import stage_input_hash, short_id
+from activities.vio_parse import parse_vio_warm_start
 
 SFM_MATCHING_CONFIG_VERSION = "v1"
 
@@ -24,17 +25,10 @@ def _extend_attempt_id(manifest: KeyframeManifest, priors_manifest: PriorsManife
     full = stage_input_hash(manifest.input_content_hash, priors_hash, config_version)
     return short_id(full)
 
-def _key_from_uri(uri: str) -> str:
-    if uri.startswith("s3://"):
-        parts = uri.split("/", 3)
-        if len(parts) == 4:
-            return parts[3]
-    return uri
-
 def build_database(keyframe_manifest: KeyframeManifest, images_dir: Path, db_path: Path):
     if db_path.exists():
         db_path.unlink()
-    db = pycolmap.Database(str(db_path))
+    db = pycolmap.Database.open(str(db_path))
     
     for frame in keyframe_manifest.frames:
         download_to(frame.object_key, images_dir / Path(frame.object_key).name)
@@ -107,15 +101,14 @@ def pack_and_upload_db(db_path: Path, sfm_dir: Path, object_key: str):
     upload_from(tar_path, object_key)
     tar_path.unlink()
 
-@activity.defn(name="extract_and_match_features")
 async def extract_and_match_features(payload: SfmFeaturesInput) -> SfmFeaturesOutput:
     loop = asyncio.get_running_loop()
 
-    manifest_key = _key_from_uri(payload.keyframe_manifest_uri)
+    manifest_key = key_from_uri(payload.keyframe_manifest_uri)
     manifest = KeyframeManifest.model_validate(await loop.run_in_executor(None, get_json, manifest_key))
     
     if payload.priors_manifest_uri:
-        priors_key = _key_from_uri(payload.priors_manifest_uri)
+        priors_key = key_from_uri(payload.priors_manifest_uri)
         priors_manifest = PriorsManifest.model_validate(await loop.run_in_executor(None, get_json, priors_key))
     else:
         priors_manifest = None
@@ -301,7 +294,6 @@ def compute_helmert_alignment(reconstruction, priors_manifest: PriorsManifest) -
         n_control_points=len(src), control_point_source="ppk_camera_centers",
     )
 
-@activity.defn(name="run_bundle_adjustment")
 async def run_bundle_adjustment(payload: BundleAdjustmentInput) -> BundleAdjustmentOutput:
     loop = asyncio.get_running_loop()
     
@@ -313,11 +305,11 @@ async def run_bundle_adjustment(payload: BundleAdjustmentInput) -> BundleAdjustm
     output_dir = sfm_dir / "model_output"
     output_dir.mkdir(exist_ok=True)
     
-    manifest_key = _key_from_uri(payload.keyframe_manifest_uri)
+    manifest_key = key_from_uri(payload.keyframe_manifest_uri)
     manifest = KeyframeManifest.model_validate(await loop.run_in_executor(None, get_json, manifest_key))
     
     if payload.priors_manifest_uri:
-        priors_key = _key_from_uri(payload.priors_manifest_uri)
+        priors_key = key_from_uri(payload.priors_manifest_uri)
         priors_manifest = PriorsManifest.model_validate(await loop.run_in_executor(None, get_json, priors_key))
     else:
         priors_manifest = None
@@ -392,3 +384,22 @@ async def run_bundle_adjustment(payload: BundleAdjustmentInput) -> BundleAdjustm
     uri = await loop.run_in_executor(None, put_json, result_key, result_payload)
 
     return BundleAdjustmentOutput(mission_id=payload.mission_id, attempt_id=payload.attempt_id, sfm_result_uri=uri)
+
+
+@activity.defn(name="ActivitySfM")
+async def run_sfm_stage(payload: StageInput) -> StageOutput:
+    keyframe_manifest_uri = payload.input_uris[0]
+
+    vio_out = await parse_vio_warm_start(VioParseInput(
+        mission_id=payload.mission_id, run_id=payload.run_id, keyframe_manifest_uri=keyframe_manifest_uri,
+    ))
+    feat_out = await extract_and_match_features(SfmFeaturesInput(
+        mission_id=payload.mission_id, run_id=payload.run_id,
+        keyframe_manifest_uri=keyframe_manifest_uri, priors_manifest_uri=vio_out.priors_manifest_uri,
+    ))
+    ba_out = await run_bundle_adjustment(BundleAdjustmentInput(
+        mission_id=payload.mission_id, run_id=payload.run_id, attempt_id=feat_out.attempt_id,
+        keyframe_manifest_uri=keyframe_manifest_uri, priors_manifest_uri=vio_out.priors_manifest_uri,
+    ))
+
+    return StageOutput(output_uri=ba_out.sfm_result_uri, output_hash=ba_out.attempt_id)

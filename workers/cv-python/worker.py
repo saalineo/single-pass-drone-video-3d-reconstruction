@@ -5,22 +5,32 @@ from concurrent.futures import ThreadPoolExecutor
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from activities.curation import curate_keyframes
-from activities.masking import mask_dynamic_objects
-from activities.sfm import extract_and_match_features, run_bundle_adjustment
-from activities.vio_parse import parse_vio_warm_start
+from activities.curation import run_curation
+from activities.sfm import run_sfm_stage
+from activities.masking import run_masking
+from activities.depth import run_depth
+from activities.dense_3dgs import run_dense_3dgs
+from activities.meshing import run_meshing
+from activities.georef import run_georef
+from activities.productgen import run_product_gen
 from common.config import settings
 
 logging.basicConfig(level=logging.INFO)
 
 
 def build_activity_list():
+    # One entrypoint per Go workflow activity name (workflows/reconstruction/activities.go).
+    # VIO warm-start, feature matching, and bundle adjustment are internal steps of
+    # run_sfm_stage (ActivitySfM), not separately registered activities.
     return [
-        curate_keyframes,
-        parse_vio_warm_start,
-        extract_and_match_features,
-        run_bundle_adjustment,
-        mask_dynamic_objects,
+        run_curation,
+        run_sfm_stage,
+        run_masking,
+        run_depth,
+        run_dense_3dgs,
+        run_meshing,
+        run_georef,
+        run_product_gen,
     ]
 
 

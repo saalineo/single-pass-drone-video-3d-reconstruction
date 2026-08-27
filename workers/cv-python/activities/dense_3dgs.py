@@ -4,14 +4,15 @@ from temporalio import activity
 
 from cv_common import gs_dataset, gs_train, gs_export, minio_io
 from common.config import settings
+from common.schemas import StageInput, StageOutput
 
 @activity.defn(name="ActivityDense3DGS")
-async def run_dense_3dgs(payload: dict) -> dict:
+async def run_dense_3dgs(payload: StageInput) -> StageOutput:
     loop = asyncio.get_running_loop()
-    mission_id = payload.get("mission_id")
-    set_id = payload.get("set_id")
-    attempt_id = payload.get("attempt_id")
-    total_steps = payload.get("total_steps", 30_000)
+    mission_id = payload.mission_id
+    set_id = payload.params["set_id"]
+    attempt_id = payload.params["attempt_id"]
+    total_steps = int(payload.params.get("total_steps", "30000"))
     
     activity.logger.info(f"dense_3dgs phase 1: dataset build mission={mission_id}")
     scratch_dir = Path(settings.scratch_dir) / activity.info().workflow_run_id / "dense" / "3dgs"
@@ -58,9 +59,12 @@ async def run_dense_3dgs(payload: dict) -> dict:
     await loop.run_in_executor(None, minio_io.put_json, f"missions/{mission_id}/dense/3dgs/train_metrics.json", {"steps": metrics_log})
 
 
-    return {
-        "n_gaussians_final": final.get("n_gaussians", 0),
-        "opacity_mean_final": final.get("opacity_mean", 0),
-        "scale_frac_degenerate_final": final.get("scale_frac_degenerate", 0),
-        "scene_uri": f"dense/3dgs/scene.ply"
-    }
+    return StageOutput(
+        output_uri=f"s3://{settings.bucket}/missions/{mission_id}/dense/3dgs/scene.ply",
+        output_hash=attempt_id,
+        metrics={
+            "n_gaussians_final": float(final.get("n_gaussians", 0)),
+            "opacity_mean_final": float(final.get("opacity_mean", 0)),
+            "scale_frac_degenerate_final": float(final.get("scale_frac_degenerate", 0)),
+        },
+    )

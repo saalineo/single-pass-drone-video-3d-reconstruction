@@ -4,10 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from pyproj import Transformer
 
-from temporalio import activity
-
 from common.schemas import VioParseInput, VioParseOutput, KeyframeManifest, PosePriorRecord, PriorsManifest, GpsFix
-from common.object_store import object_exists, get_json, download_to, put_json, sha256_file, get_client
+from common.object_store import object_exists, get_json, download_to, put_json, sha256_file, get_client, key_from_uri
 from common.idempotency import stage_input_hash, short_id
 from common.config import settings
 
@@ -142,17 +140,9 @@ def write_colmap_text_render(priors_manifest: PriorsManifest, intrinsics: dict) 
         lines.append("")
     return cameras_txt, "\n".join(lines)
 
-def _key_from_uri(uri: str) -> str:
-    # "s3://recon-dev/missions/..." -> "missions/..."
-    if uri.startswith("s3://"):
-        parts = uri.split("/", 3)
-        if len(parts) == 4:
-            return parts[3]
-    return uri
-
 def safe_download(key: str, dest: Path) -> Path | None:
     try:
-        return download_to(key, dest)
+        return download_to(key, dest, bucket=settings.raw_bucket)
     except Exception:  # file may not exist (ppk/baro logs are optional)
         return None
 
@@ -160,12 +150,16 @@ def upload_text(key: str, content: str):
     client = get_client()
     client.put_object(Bucket=settings.bucket, Key=key, Body=content.encode("utf-8"))
 
-@activity.defn(name="parse_vio_warm_start")
+# Not a standalone Temporal activity: called directly by ActivitySfM
+# (activities/sfm.py:run_sfm_stage) as the first step of the merged SfM stage, so the
+# Go workflow's single "ActivitySfM" activity owns one heartbeat/retry budget for
+# VIO warm-start + feature matching + bundle adjustment together (doc 02 §6 API
+# contract models these as one "sfm_pose" stage).
 async def parse_vio_warm_start(payload: VioParseInput) -> VioParseOutput:
     scratch = Path(settings.scratch_dir) / payload.run_id / "vio_parse"
     scratch.mkdir(parents=True, exist_ok=True)
     
-    manifest_key = _key_from_uri(payload.keyframe_manifest_uri)
+    manifest_key = key_from_uri(payload.keyframe_manifest_uri)
     manifest = KeyframeManifest.model_validate(get_json(manifest_key))
     
     gps_path = safe_download(f"missions/{payload.mission_id}/raw/telemetry/gps.log", scratch / "gps.log")

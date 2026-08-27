@@ -17,7 +17,7 @@ func getEnvOrDefault(key, fallback string) string {
 }
 
 func main() {
-	hostPort := getEnvOrDefault("TEMPORAL_HOST_PORT", "temporal-frontend.recon-messaging.svc.cluster.local:7233")
+	hostPort := getEnvOrDefault("TEMPORAL_HOST_PORT", "localhost:7233")
 	namespace := getEnvOrDefault("TEMPORAL_NAMESPACE", "recon")
 
 	c, err := client.Dial(client.Options{

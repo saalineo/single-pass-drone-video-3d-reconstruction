@@ -33,7 +33,7 @@ def test_matching_strategy_falls_back_to_sequential_without_priors():
 
 def test_database_has_two_view_geometries_after_matching(tmp_path):
     db_path = tmp_path / "database.db"
-    db = pycolmap.Database(str(db_path))
+    db = pycolmap.Database.open(str(db_path))
     
     # We must add a camera and at least two images with features to match
     camera_id = db.write_camera(pycolmap.Camera(
@@ -47,14 +47,17 @@ def test_database_has_two_view_geometries_after_matching(tmp_path):
     db.write_keypoints(img1_id, np.array([[10, 10], [20, 20]], dtype=np.float32))
     db.write_keypoints(img2_id, np.array([[10, 10], [20, 20]], dtype=np.float32))
     # Dummy descriptors (128-dim)
-    desc = np.random.randint(0, 256, (2, 128), dtype=np.uint8)
+    desc = pycolmap.FeatureDescriptors(
+        pycolmap.FeatureExtractorType.SIFT,
+        np.random.randint(0, 256, (2, 128), dtype=np.uint8),
+    )
     db.write_descriptors(img1_id, desc)
     db.write_descriptors(img2_id, desc)
     
     db.close()
     
     run_matching(db_path, "exhaustive", vocab_tree_path="")
-    db = pycolmap.Database(str(db_path))
+    db = pycolmap.Database.open(str(db_path))
     # Matches may be 0 if the dummy random descriptors don't match or pycolmap filters them,
     # but the API call succeeds without crashing. In a real test we check `num_matches() >= 0`.
     assert db.num_matches() >= 0

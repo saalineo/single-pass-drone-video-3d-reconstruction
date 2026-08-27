@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	ingestv1 "github.com/single-pass-recon/ingest-svc/gen/ingest/v1"
+	"github.com/single-pass-recon/workflows/reconstruction"
+	"go.temporal.io/sdk/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -20,11 +22,49 @@ type WorkflowLauncher interface {
 	LaunchReconstruction(ctx context.Context, missionID, flightSessionID, preset string, segmentIndices []uint32) (runID string, temporalWorkflowID string, err error)
 }
 
+// DefaultWorkflowLauncher is a no-Temporal-dependency stand-in for unit tests; it
+// never actually starts a workflow. Production wiring (cmd/server/main.go) must use
+// TemporalWorkflowLauncher instead.
 type DefaultWorkflowLauncher struct{}
 
 func (d *DefaultWorkflowLauncher) LaunchReconstruction(ctx context.Context, missionID, flightSessionID, preset string, segmentIndices []uint32) (string, string, error) {
 	runID := uuid.New().String()
 	workflowID := fmt.Sprintf("recon-%s", missionID)
+	return runID, workflowID, nil
+}
+
+// TemporalWorkflowLauncher is the real launcher: it starts an actual
+// ReconstructionWorkflow execution on Temporal once ingest finalizes a mission's
+// committed video segments.
+type TemporalWorkflowLauncher struct {
+	Client client.Client
+	Store  *VideoStore
+}
+
+func (t *TemporalWorkflowLauncher) LaunchReconstruction(ctx context.Context, missionID, flightSessionID, preset string, segmentIndices []uint32) (string, string, error) {
+	if preset == "" {
+		preset = "standard"
+	}
+	inputURIs := make([]string, len(segmentIndices))
+	for i, seg := range segmentIndices {
+		inputURIs[i] = t.Store.FinalObjectURI(missionID, seg)
+	}
+
+	runID := uuid.New().String()
+	workflowID := fmt.Sprintf("recon-%s", missionID)
+
+	_, err := t.Client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: reconstruction.ControlTaskQueue,
+	}, reconstruction.ReconstructionWorkflow, reconstruction.ReconstructionWorkflowInput{
+		MissionID: missionID,
+		RunID:     runID,
+		Preset:    preset,
+		InputURIs: inputURIs,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("start ReconstructionWorkflow: %w", err)
+	}
 	return runID, workflowID, nil
 }
 

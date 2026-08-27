@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -25,10 +26,11 @@ import (
 
 func decodeAWSChunked(b []byte) []byte {
 	var result []byte
-	buf := strings.NewReader(string(b))
+	r := bufio.NewReader(strings.NewReader(string(b)))
 	for {
-		line, err := readLine(buf)
-		if err != nil || line == "" {
+		line, err := r.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if err != nil && line == "" {
 			break
 		}
 		parts := strings.SplitN(line, ";", 2)
@@ -38,25 +40,11 @@ func decodeAWSChunked(b []byte) []byte {
 			break
 		}
 		chunk := make([]byte, size)
-		n, _ := io.ReadFull(buf, chunk)
+		n, _ := io.ReadFull(r, chunk)
 		result = append(result, chunk[:n]...)
-		_, _ = readLine(buf) // consume trailing \r\n
+		_, _ = r.ReadString('\n') // consume trailing \r\n
 	}
 	return result
-}
-
-func readLine(r *strings.Reader) (string, error) {
-	var line []byte
-	for {
-		b, err := r.ReadByte()
-		if err != nil {
-			return strings.TrimSpace(string(line)), err
-		}
-		if b == '\n' {
-			return strings.TrimSpace(string(line)), nil
-		}
-		line = append(line, b)
-	}
 }
 
 type mockObject struct {

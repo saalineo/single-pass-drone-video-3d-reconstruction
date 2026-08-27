@@ -40,7 +40,7 @@ func TestGatewayRestEndpoints(t *testing.T) {
 	_ = httpLis.Close()
 
 	go func() {
-		_ = RunGateway(ctx, lis.Addr().String(), httpAddr)
+		_ = RunGateway(ctx, lis.Addr().String(), httpAddr, db.NewMissionStore(nil))
 	}()
 
 	time.Sleep(150 * time.Millisecond)
