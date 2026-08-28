@@ -20,12 +20,22 @@ CURATION_CONFIG_VERSION = "v1"
 
 TARGET_FPS = 2.0
 WINDOW_S = 1.0 / TARGET_FPS
-BLUR_MIN = 120.0
-ENTROPY_MIN_BITS = 4.0
-CLIP_FRAC_MAX = 0.15
 DUPLICATE_OVERLAP_MAX = 0.90
 MAX_PLAUSIBLE_SPEED_MPS = 30.0
 TILE_GRID = (4, 4)
+
+# Quality gates are computed per-video (see `compute_adaptive_thresholds`) rather than as
+# fixed constants: a hardcoded absolute blur/exposure bar tuned against one clip's sharpness
+# and lighting silently rejects every frame of a differently-compressed or differently-lit
+# video (e.g. a softer/portrait-mode clip) while doing nothing for a clip that's uniformly
+# too dark to use. Each threshold is the tighter of (a) a percentile within *this* video's own
+# distribution, so we always drop the video's own worst tail, and (b) an absolute sanity bound,
+# so a uniformly-unusable video can't pass just because it's "the least bad version of itself".
+QUALITY_PERCENTILE = 15  # drop roughly the worst 15% of candidate frames per video
+MIN_SAMPLES_FOR_PERCENTILE = 20  # below this, percentile estimates are noisy; fall back to the absolute bound
+ABS_BLUR_FLOOR = 15.0
+ABS_ENTROPY_FLOOR_BITS = 2.0
+ABS_CLIP_CEILING = 0.6
 
 def compute_set_id(mission_id: str, segment_hashes: list[str], config_version: str) -> tuple[str, str]:
     full = stage_input_hash(mission_id, *segment_hashes, config_version)
@@ -115,6 +125,21 @@ def normalize_for_matching(bgr: np.ndarray) -> np.ndarray:
 def normalize_val(val, vmin, vmax):
     return max(0.0, min(1.0, (val - vmin) / (vmax - vmin))) if vmax > vmin else 1.0
 
+def compute_adaptive_thresholds(candidates: list[FrameQuality]) -> tuple[float, float, float]:
+    """Blur floor / entropy floor / clip-fraction ceiling, tightened to this video's own
+    distribution but clamped by an absolute sanity bound. Returns (blur_floor, entropy_floor, clip_ceiling)."""
+    if len(candidates) < MIN_SAMPLES_FOR_PERCENTILE:
+        return ABS_BLUR_FLOOR, ABS_ENTROPY_FLOOR_BITS, ABS_CLIP_CEILING
+
+    blur_vals = [f.laplacian_variance for f in candidates]
+    entropy_vals = [f.exposure_entropy_bits for f in candidates]
+    clip_vals = [f.exposure_clip_low_frac + f.exposure_clip_high_frac for f in candidates]
+
+    blur_floor = max(ABS_BLUR_FLOOR, float(np.percentile(blur_vals, QUALITY_PERCENTILE)))
+    entropy_floor = max(ABS_ENTROPY_FLOOR_BITS, float(np.percentile(entropy_vals, QUALITY_PERCENTILE)))
+    clip_ceiling = min(ABS_CLIP_CEILING, float(np.percentile(clip_vals, 100 - QUALITY_PERCENTILE)))
+    return blur_floor, entropy_floor, clip_ceiling
+
 def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_name: str, set_id: str) -> list[FrameQuality]:
     cap = cv2.VideoCapture(str(local_mp4))
     cap.set(cv2.CAP_PROP_POS_MSEC, start_s * 1000)
@@ -147,18 +172,15 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
         blur = laplacian_blur_score(gray)
         entropy, clip_lo, clip_hi = exposure_score(scoring_frame)
         dup = overlap_ratio(prev_gray, gray) if prev_gray is not None else 0.0
-        
-        status = "kept"
-        if blur < BLUR_MIN:
-            status = "dropped_blur"
-        elif entropy < ENTROPY_MIN_BITS or (clip_lo + clip_hi) > CLIP_FRAC_MAX:
-            status = "dropped_exposure"
-        elif dup > DUPLICATE_OVERLAP_MAX:
-            status = "dropped_duplicate"
-            
-        n_blur = normalize_val(blur, BLUR_MIN, 1000.0)  # 1000 is an empirical upper bound
-        n_ent = normalize_val(entropy, ENTROPY_MIN_BITS, 8.0)
-        quality_score = 0.5 * n_blur + 0.3 * n_ent + 0.2 * (1.0 - (clip_lo + clip_hi))
+
+        # Blur/exposure are decided later, once the whole video's distribution is known
+        # (see compute_adaptive_thresholds) — a per-frame absolute cutoff can't tell a soft
+        # video from a genuinely bad frame. Duplicate detection stays here: it's a purely
+        # local, sequential decision that doesn't depend on the rest of the video.
+        status = "dropped_duplicate" if dup > DUPLICATE_OVERLAP_MAX else "candidate"
+
+        # Placeholder quality_score (needs the adaptive floors); recomputed once thresholds are known.
+        quality_score = 0.0
 
         timestamp_utc = datetime.fromtimestamp(ts, tz=timezone.utc)
 
@@ -179,14 +201,14 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
             gps=None,
             status=status
         )
-        if status == "kept":
+        if status == "candidate":
             norm_bgr = normalize_for_matching(frame)
             scratch_path = local_mp4.parent / f"{segment_name}_{frame_idx}.jpg"
             cv2.imwrite(str(scratch_path), norm_bgr)
             fq.sha256 = sha256_file(scratch_path)
             fq.object_key = str(scratch_path)  # scratch path carried forward until upload
 
-            
+
         results.append(fq)
         
         prev_gray, prev_ts = gray, ts
@@ -195,16 +217,28 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
     cap.release()
     return results
 
+async def _heartbeat_loop(interval_sec: float = 3.0):
+    while True:
+        try:
+            await asyncio.sleep(interval_sec)
+            activity.heartbeat("processing curation")
+        except asyncio.CancelledError:
+            break
+
 @activity.defn(name="ActivityCuration")
 async def run_curation(payload: StageInput) -> StageOutput:
-    out = await curate_keyframes(CurationInput(
-        mission_id=payload.mission_id, run_id=payload.run_id,
-        video_segment_keys=[key_from_uri(u) for u in payload.input_uris],
-    ))
-    return StageOutput(
-        output_uri=out.manifest_uri, output_hash=out.set_id,
-        metrics={"num_kept": float(out.num_kept), "num_dropped": float(out.num_dropped)},
-    )
+    hb_task = asyncio.create_task(_heartbeat_loop())
+    try:
+        out = await curate_keyframes(CurationInput(
+            mission_id=payload.mission_id, run_id=payload.run_id,
+            video_segment_keys=[key_from_uri(u) for u in payload.input_uris],
+        ))
+        return StageOutput(
+            output_uri=out.manifest_uri, output_hash=out.set_id,
+            metrics={"num_kept": float(out.num_kept), "num_dropped": float(out.num_dropped)},
+        )
+    finally:
+        hb_task.cancel()
 
 
 async def curate_keyframes(payload: CurationInput) -> CurationOutput:
@@ -231,6 +265,12 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
     if exists:
         manifest_json = await loop.run_in_executor(None, get_json, manifest_key)
         manifest = KeyframeManifest.model_validate(manifest_json)
+        if not manifest.frames:
+            raise ValueError(
+                f"curation kept 0 frames for mission {payload.mission_id} (set {set_id}, "
+                f"cached manifest) — every frame was dropped; check source footage quality "
+                f"or curation thresholds before continuing the pipeline"
+            )
         return CurationOutput(
             mission_id=payload.mission_id, set_id=set_id,
             manifest_uri=f"s3://{settings.bucket}/{manifest_key}",
@@ -274,6 +314,29 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
             activity.heartbeat(f"processed a shard")
 
     all_scored.sort(key=lambda f: f.timestamp_utc)
+
+    candidates = [f for f in all_scored if f.status == "candidate"]
+    blur_floor, entropy_floor, clip_ceiling = compute_adaptive_thresholds(candidates)
+    activity.logger.info(
+        "adaptive quality thresholds: blur_floor=%.1f entropy_floor=%.2f clip_ceiling=%.2f (n=%d)",
+        blur_floor, entropy_floor, clip_ceiling, len(candidates),
+    )
+    for f in candidates:
+        if f.laplacian_variance < blur_floor:
+            f.status = "dropped_blur"
+        elif f.exposure_entropy_bits < entropy_floor or (f.exposure_clip_low_frac + f.exposure_clip_high_frac) > clip_ceiling:
+            f.status = "dropped_exposure"
+        else:
+            f.status = "kept"
+            n_blur = normalize_val(f.laplacian_variance, blur_floor, max(1000.0, blur_floor * 3))
+            n_ent = normalize_val(f.exposure_entropy_bits, entropy_floor, 8.0)
+            f.quality_score = 0.5 * n_blur + 0.3 * n_ent + 0.2 * (1.0 - (f.exposure_clip_low_frac + f.exposure_clip_high_frac))
+
+        if f.status != "kept" and f.object_key and Path(f.object_key).exists():
+            try:
+                Path(f.object_key).unlink()
+            except Exception:
+                pass
 
     threshold_passed = [f for f in all_scored if f.status == "kept"]
     selected = select_keyframes(threshold_passed)
@@ -319,12 +382,24 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
             stats["dropped_total"] += 1
 
 
+    if not kept_frames:
+        top_drop_reasons = sorted(
+            ((k, v) for k, v in stats.items() if k != "dropped_total"),
+            key=lambda kv: kv[1], reverse=True,
+        )
+        reasons = ", ".join(f"{k}={v}" for k, v in top_drop_reasons) or "no candidate frames decoded"
+        raise ValueError(
+            f"curation kept 0/{stats['dropped_total']} frames for mission {payload.mission_id} "
+            f"(set {set_id}) — every frame was dropped ({reasons}); check source footage quality "
+            f"or curation thresholds before continuing the pipeline"
+        )
+
     manifest = KeyframeManifest(
         mission_id=payload.mission_id, set_id=set_id, input_content_hash=full_hash,
         curation_config_version=CURATION_CONFIG_VERSION, generated_at=datetime.now(timezone.utc),
         frames=kept_frames, stats=stats,
     )
-    
+
     manifest_uri = await loop.run_in_executor(None, put_json, manifest_key, manifest.model_dump(mode="json"))
     return CurationOutput(
         mission_id=payload.mission_id, set_id=set_id, manifest_uri=manifest_uri,

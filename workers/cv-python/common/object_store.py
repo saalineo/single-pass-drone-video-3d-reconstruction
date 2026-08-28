@@ -64,6 +64,19 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def sha256_object(key: str) -> str:
+    resp = get_client().get_object(Bucket=settings.bucket, Key=key)
+    h = hashlib.sha256()
+    for chunk in resp["Body"].iter_chunks(chunk_size=1 << 20):
+        h.update(chunk)
+    return h.hexdigest()
+
+
+def public_url(key: str) -> str:
+    scheme = "https" if settings.minio_secure else "http"
+    return f"{scheme}://{settings.minio_endpoint}/{settings.bucket}/{key}"
+
+
 def key_from_uri(uri: str) -> str:
     if uri.startswith("s3://"):
         parts = uri.split("/", 3)

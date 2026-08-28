@@ -17,14 +17,15 @@ dependencies = [
     "structlog>=24.1.0",
     "temporalio>=1.7.0",
     "transformers>=4.42.0",
-    "torch==2.3.1+cu121",
-    "torchvision==0.18.1+cu121",
+    "torch==2.5.1+cu121",
+    "torchvision==0.20.1+cu121",
     "laspy[lazrs]>=2.7.0",
     "rasterio>=1.5.0",
     "trimesh>=5.0.0",
     "plyfile>=1.1.5",
     "cryptography>=42.0.0",
     "open3d>=0.19.0",
+    "asyncpg>=0.31.0",
 ]
 
 [dependency-groups]

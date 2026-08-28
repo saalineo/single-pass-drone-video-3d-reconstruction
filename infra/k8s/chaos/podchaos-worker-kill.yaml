@@ -1,0 +1,13 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: depth-worker-kill
+  namespace: recon-gpu
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces: [recon-gpu]
+    labelSelectors: {app: depth-worker}
+  scheduler:
+    cron: "@every 1h"     # only active during the nightly chaos+soak staging window

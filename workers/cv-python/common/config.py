@@ -13,6 +13,11 @@ class Settings:
     minio_secret_key: str = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
     minio_secure: bool = os.environ.get("MINIO_SECURE", "false").lower() == "true"
     scratch_dir: str = os.environ.get("SCRATCH_DIR", "/scratch")
+    # Same env var name and default as services/mission-svc/cmd/server/main.go so both
+    # point at the same database without separate config.
+    postgres_dsn: str = os.environ.get(
+        "POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/reconstruction?sslmode=disable"
+    )
     # Raw video/telemetry lands in ingest-svc's and telemetry-worker's own bucket
     # (same env var they read, so one setting keeps all three services aligned) —
     # everything curation produces onward lives in `bucket` below.

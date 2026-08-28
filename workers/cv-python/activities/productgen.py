@@ -5,7 +5,8 @@ import numpy as np
 from temporalio import activity
 
 from common.config import settings
-from common.object_store import object_exists, get_client, download_to, put_json, upload_from
+from common.object_store import object_exists, get_client, download_to, put_json, upload_from, public_url, sha256_object
+from common.postgres_store import publish_products
 from common.schemas import StageInput, StageOutput
 from cv_common import crs_utils, coverage_raster, laz_export, provenance, minio_io
 
@@ -177,6 +178,35 @@ async def run_product_gen(payload: StageInput) -> StageOutput:
         return prov
 
     prov_manifest = await loop.run_in_executor(None, assemble_o9)
+
+    # Publish to the product catalog (products table) so mission-svc and the web
+    # viewer see these artifacts — object storage alone isn't discoverable by them.
+    written_keys = {"provenance": o9_key}
+    if o1_written:
+        written_keys["mesh_glb"] = o1_key
+    if o5_written:
+        written_keys["trajectory"] = o5_key
+    if o7_present:
+        written_keys["qa_report"] = o7_src_key
+    written_keys["point_cloud_laz"] = o2_key
+    written_keys["confidence_raster"] = o6_key
+
+    def compute_checksums() -> dict[str, str]:
+        return {kind: sha256_object(key) for kind, key in written_keys.items()}
+
+    checksums = await loop.run_in_executor(None, compute_checksums)
+    await publish_products(
+        mission_id,
+        [
+            {
+                "kind": kind,
+                "uri": public_url(key),
+                "checksum": checksums[kind],
+                "provenance_ref": public_url(o9_key),
+            }
+            for kind, key in written_keys.items()
+        ],
+    )
 
     return StageOutput(
         output_uri=f"s3://{settings.bucket}/{products_prefix}/",

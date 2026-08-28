@@ -1,7 +1,10 @@
+import logging
 import os
 import torch
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 class DepthAnythingV2Metric:
     """Wraps the metric-head DA-v2 checkpoint (outdoor, up to ~80m range)."""
@@ -9,19 +12,12 @@ class DepthAnythingV2Metric:
 
     def __init__(self, device: str = "cuda"):
         self.device = device
-        try:
-            self.processor = AutoImageProcessor.from_pretrained(self.CKPT)
-            self.model = AutoModelForDepthEstimation.from_pretrained(self.CKPT).to(device).eval()
-        except Exception:
-            self.processor = None
-            self.model = None
+        self.processor = AutoImageProcessor.from_pretrained(self.CKPT)
+        self.model = AutoModelForDepthEstimation.from_pretrained(self.CKPT).to(device).eval()
 
     @torch.inference_mode()
     def infer_tile(self, rgb_uint8: np.ndarray) -> np.ndarray:
         """rgb_uint8: HxWx3 uint8 tile, 518-1024px per architect/03 SS5. Returns HxW float32 meters."""
-        if not self.processor or not self.model:
-            return np.ones(rgb_uint8.shape[:2], dtype=np.float32)
-            
         inputs = self.processor(images=rgb_uint8, return_tensors="pt").to(self.device)
         out = self.model(**inputs).predicted_depth  # (1, h', w')
         depth = torch.nn.functional.interpolate(

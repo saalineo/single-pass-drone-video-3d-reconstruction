@@ -1,0 +1,14 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: datalink-total-loss
+  namespace: core-gateway
+spec:
+  action: loss
+  mode: all
+  selector:
+    namespaces: [core-gateway]
+    labelSelectors: {app: wireguard-gateway}
+  loss:
+    loss: "100"
+  duration: "6m"
