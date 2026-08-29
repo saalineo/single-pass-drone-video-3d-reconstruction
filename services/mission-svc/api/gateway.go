@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
@@ -27,6 +29,14 @@ func RunGateway(ctx context.Context, grpcAddr, httpAddr string, missions *db.Mis
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		// Proxy /v1/ingest/upload to ingest-svc HTTP port 8081
+		if strings.HasPrefix(r.URL.Path, "/v1/ingest/") {
+			ingestURL, _ := url.Parse("http://127.0.0.1:8081")
+			proxy := httputil.NewSingleHostReverseProxy(ingestURL)
+			proxy.ServeHTTP(w, r)
 			return
 		}
 

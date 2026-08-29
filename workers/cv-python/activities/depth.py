@@ -29,7 +29,7 @@ async def infer_metric_depth(mission_id: str, set_id: str, attempt_id: str) -> d
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
     sparse = await loop.run_in_executor(None, colmap_io.load_sparse_model, mission_id, attempt_id, scratch_dir)
-    model = await loop.run_in_executor(None, depth_models.load_backend, "cuda")
+    model = await loop.run_in_executor(None, depth_models.load_backend, None)
 
     manifest = {"mission_id": mission_id, "set_id": set_id, "frames": {}}
     keyframe_ids = await loop.run_in_executor(None, colmap_io.list_registered_images, sparse)

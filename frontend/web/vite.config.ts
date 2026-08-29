@@ -9,8 +9,7 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: {
     proxy: {
-      // Local dev only: Go control plane doesn't need CORS headers when
-      // requests are proxied same-origin through the Vite dev server.
+      '/v1/ingest': { target: 'http://localhost:8081', changeOrigin: true },
       '/v1': { target: 'http://localhost:8080', changeOrigin: true },
     },
   },

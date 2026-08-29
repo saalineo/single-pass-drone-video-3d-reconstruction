@@ -20,6 +20,8 @@ BOX_THRESHOLD, TEXT_THRESHOLD = 0.30, 0.25
 RESEED_INTERVAL = 15
 DILATION_MARGIN_PX = 5
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 def frame_filename(frame) -> str:
     return Path(frame.object_key).name
 
@@ -28,7 +30,7 @@ def load_image(path: Path):
     return Image.open(str(path)).convert("RGB")
 
 def seed_boxes(image, processor, detector) -> list[dict]:
-    inputs = processor(images=image, text=PROMPT, return_tensors="pt").to("cuda")
+    inputs = processor(images=image, text=PROMPT, return_tensors="pt").to(DEVICE)
     with torch.no_grad():
         outputs = detector(**inputs)
     results = processor.post_process_grounded_object_detection(
@@ -43,6 +45,7 @@ def build_predictor():
         return build_sam2_video_predictor(
             config_file="configs/sam2.1/sam2.1_hiera_l.yaml",
             ckpt_path="/models/sam2/sam2.1_hiera_large.pt",
+            device=DEVICE,
         )
     except ImportError:
         return None
@@ -152,7 +155,7 @@ async def mask_dynamic_objects(payload: MaskingInput) -> MaskingOutput:
         try:
             from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
             processor = AutoProcessor.from_pretrained("/models/grounding-dino-tiny")
-            detector = AutoModelForZeroShotObjectDetection.from_pretrained("/models/grounding-dino-tiny").to("cuda")
+            detector = AutoModelForZeroShotObjectDetection.from_pretrained("/models/grounding-dino-tiny").to(DEVICE)
             return processor, detector
         except Exception:
             return None, None

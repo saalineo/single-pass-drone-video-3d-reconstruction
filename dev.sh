@@ -1,28 +1,18 @@
 #!/usr/bin/env bash
-
-# Processes launched (each in the background, logs tee'd to logs/dev/):
-#   mission-svc       (Go)  — gRPC :50051, REST gateway :8080
-#   ingest-svc        (Go)  — gRPC :50052  (INGEST_GRPC_PORT=50052)
-#   telemetry-worker  (Go)  — NATS telemetry worker  [needs NATS on :4222]
-#   workflow-worker   (Go)  — Temporal workflow worker [needs Temporal on :7233]
-#   cv-python worker  (Py)  — Temporal CV activity worker (uv)
-#   web frontend      (Node) — Vite dev server :5173
+#
+# dev.sh — Local Development Environment Launcher
+# Supports: Split-Terminal (tmux multiplexing) & Standard Background Modes
 #
 # Usage:
-#   ./dev.sh                        # start everything
-#   ./dev.sh --no-cv                # skip cv-python (no GPU / heavy deps)
-#   ./dev.sh --no-telemetry         # skip telemetry-worker (no NATS)
-#   ./dev.sh --no-cv --no-telemetry # skip both
+#   ./dev.sh                        # start everything in split terminal (if tmux installed)
+#   ./dev.sh --no-tmux              # run in single terminal background mode
+#   ./dev.sh --no-cv                # skip cv-python worker
+#   ./dev.sh --no-telemetry         # skip telemetry worker
+#   ./dev.sh --no-cv --no-telemetry # skip both workers
 #
-# Hard prerequisites (must be running before ./dev.sh):
-#   Temporal server — e.g.: temporal server start-dev
-#   NATS server     — e.g.: nats-server  (only needed without --no-telemetry)
-#   PostgreSQL      — mission-svc continues in degraded mode without it
-#   MinIO           — ingest/telemetry workers need S3 at :9000
-
 set -euo pipefail
 
-# Local Development Environment Defaults
+# Environment Defaults
 : "${MINIO_ENDPOINT:=localhost:9000}"
 : "${MINIO_ACCESS_KEY:=minioadmin}"
 : "${MINIO_SECRET_KEY:=minioadmin}"
@@ -48,10 +38,103 @@ mkdir -p "$LOGS"
 
 NO_CV=false
 NO_TELEMETRY=false
+NO_TMUX=false
+
 for arg in "$@"; do
   [[ "$arg" == "--no-cv" ]]        && NO_CV=true
   [[ "$arg" == "--no-telemetry" ]] && NO_TELEMETRY=true
+  [[ "$arg" == "--no-tmux" ]]      && NO_TMUX=true
 done
+
+echo "==> Building Go binaries…"
+(cd "$ROOT/services/mission-svc"      && go build -o bin/mission-svc ./cmd/server) 2>&1 | sed 's/^/  [mission-svc]  /'
+(cd "$ROOT/services/ingest-svc"       && go build -o bin/ingest-svc ./cmd/server) 2>&1 | sed 's/^/  [ingest-svc]   /'
+(cd "$ROOT/services/telemetry-worker" && go build -o bin/telemetry-worker ./cmd/telemetry-worker) 2>&1 | sed 's/^/  [telemetry-wk] /'
+(cd "$ROOT/workflows"                  && go build -o bin/reconstruction-worker ./cmd/worker) 2>&1 | sed 's/^/  [workflow-wk]  /'
+
+# Prepare frontend
+WEB_DIR="$ROOT/frontend/web"
+if [[ ! -f "$WEB_DIR/.env" ]]; then
+  cp "$WEB_DIR/.env.example" "$WEB_DIR/.env" 2>/dev/null || true
+fi
+if [[ ! -d "$WEB_DIR/node_modules" ]]; then
+  echo "==> Installing Web frontend node_modules…"
+  (cd "$WEB_DIR" && npm install)
+fi
+
+# Prepare CV Python worker
+CV_DIR="$ROOT/workers/cv-python"
+if [[ "$NO_CV" == false && -d "$CV_DIR" ]]; then
+  if command -v uv >/dev/null 2>&1 && [[ ! -d "$CV_DIR/.venv" ]]; then
+    echo "==> Running 'uv sync' in workers/cv-python…"
+    (cd "$CV_DIR" && uv sync)
+  fi
+fi
+
+# Check tmux availability for split terminal execution
+USE_TMUX=false
+if [[ "$NO_TMUX" == false ]] && command -v tmux >/dev/null 2>&1; then
+  USE_TMUX=true
+fi
+
+if [[ "$USE_TMUX" == true ]]; then
+  SESSION="recon-dev"
+  echo "==> Launching services in split terminal mode via tmux (session: '$SESSION')…"
+  
+  # Terminate existing session if active
+  tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+  # Pane 1: mission-svc
+  tmux new-session -d -s "$SESSION" -n "services" \
+    "cd '$ROOT/services/mission-svc' && bin/mission-svc 2>&1 | tee '$LOGS/mission-svc.log'"
+
+  # Pane 2: ingest-svc
+  tmux split-window -t "$SESSION:services" -v \
+    "cd '$ROOT/services/ingest-svc' && env INGEST_GRPC_PORT=50052 INGEST_HTTP_PORT=8081 bin/ingest-svc 2>&1 | tee '$LOGS/ingest-svc.log'"
+
+  # Pane 3: workflow-worker
+  tmux split-window -t "$SESSION:services" -h \
+    "cd '$ROOT/workflows' && bin/reconstruction-worker 2>&1 | tee '$LOGS/workflow-worker.log'"
+
+  # Pane 4: web-frontend
+  tmux split-window -t "$SESSION:services" -v \
+    "cd '$WEB_DIR' && npm run dev 2>&1 | tee '$LOGS/web-frontend.log'"
+
+  # Pane 5: telemetry-worker (if enabled)
+  if [[ "$NO_TELEMETRY" == false ]]; then
+    tmux split-window -t "$SESSION:services" -h \
+      "cd '$ROOT/services/telemetry-worker' && bin/telemetry-worker 2>&1 | tee '$LOGS/telemetry-worker.log'"
+  fi
+
+  # Pane 6: cv-python-worker (if enabled)
+  if [[ "$NO_CV" == false ]]; then
+    tmux split-window -t "$SESSION:services" -v \
+      "cd '$CV_DIR' && uv run worker.py 2>&1 | tee '$LOGS/cv-python-worker.log'"
+  fi
+
+  # Equalize pane sizes cleanly
+  tmux select-layout -t "$SESSION:services" tiled
+
+  echo ""
+  echo "  [OK] All services spawned in tmux split terminal panes!"
+  echo ""
+  echo "    mission-svc REST  → http://localhost:8080"
+  echo "    ingest-svc  HTTP  → http://localhost:8081"
+  echo "    web frontend      → http://localhost:5173"
+  echo "    temporal UI       → http://localhost:8233"
+  echo ""
+  echo "  Attaching to split terminal pane view… (Press Ctrl+B then D to detach, or Ctrl+C in pane to stop)"
+  echo ""
+
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux switch-client -t "$SESSION"
+  else
+    exec tmux attach-session -t "$SESSION"
+  fi
+  exit 0
+fi
+
+echo "==> Starting services in background mode…"
 
 PIDS=()
 NAMES=()
@@ -76,107 +159,42 @@ start() {
   NAMES+=("$name")
 }
 
-echo "==> Building Go services and workflow worker…"
-(cd "$ROOT/services/mission-svc"      && make build) 2>&1 | sed 's/^/  [mission-svc]  /'
-(cd "$ROOT/services/ingest-svc"       && make build) 2>&1 | sed 's/^/  [ingest-svc]   /'
-(cd "$ROOT/services/telemetry-worker" && make build) 2>&1 | sed 's/^/  [telemetry-wk] /'
-(cd "$ROOT/workflows"                  && go build -o bin/reconstruction-worker ./cmd/worker) 2>&1 | sed 's/^/  [workflow-wk]  /'
-
-echo ""
-echo "==> Starting services…"
-
 # mission-svc: gRPC :50051, REST :8080
 start "mission-svc" "$ROOT/services/mission-svc/bin/mission-svc"
 
-# ingest-svc: gRPC :50052 (mission-svc already owns :50051)
-start "ingest-svc" env INGEST_GRPC_PORT=50052 \
+# ingest-svc: gRPC :50052, HTTP :8081
+start "ingest-svc" env INGEST_GRPC_PORT=50052 INGEST_HTTP_PORT=8081 \
   "$ROOT/services/ingest-svc/bin/ingest-svc"
 
-# telemetry-worker (needs NATS)
+# telemetry-worker
 if [[ "$NO_TELEMETRY" == false ]]; then
   start "telemetry-worker" "$ROOT/services/telemetry-worker/bin/telemetry-worker"
 else
   echo "  [skip] telemetry-worker (--no-telemetry)"
 fi
 
-# Temporal workflow worker: registers ReconstructionWorkflow on CONTROL_TASK_QUEUE.
-# The Python worker below registers the CV activities on CV_TASK_QUEUE.
+# Temporal workflow worker
 start "workflow-worker" "$ROOT/workflows/bin/reconstruction-worker"
 
-start_cv_worker() {
-  local CV_DIR="$ROOT/workers/cv-python"
-
-  if ! command -v uv >/dev/null 2>&1; then
-    echo "  [!] cv-python: uv not found on PATH — skipping"
-    echo "      Run: curl -LsSf https://astral.sh/uv/install.sh | sh"
-    return 1
-  fi
-
-  if [[ ! -d "$CV_DIR/.venv" ]]; then
-    echo "  [!] cv-python: .venv missing — running 'uv sync' (this may take a while)…"
-    if ! (cd "$CV_DIR" && uv sync) 2>&1 | sed 's/^/  [cv-python] /'; then
-      echo "  [!] cv-python: 'uv sync' failed — skipping worker"
-      return 1
-    fi
-  fi
-
-  start "cv-python-worker" bash -c "cd '$CV_DIR' && uv run worker.py"
-}
-
+# Python CV worker
 if [[ "$NO_CV" == false ]]; then
-  start_cv_worker || true   # failure is non-fatal; other services keep running
+  if command -v uv >/dev/null 2>&1; then
+    start "cv-python-worker" bash -c "cd '$CV_DIR' && uv run worker.py"
+  fi
 else
   echo "  [skip] cv-python-worker (--no-cv)"
 fi
 
-WEB_DIR="$ROOT/frontend/web"
-if [[ ! -f "$WEB_DIR/.env" ]]; then
-  echo "  [!] frontend/web/.env not found — copying from .env.example"
-  cp "$WEB_DIR/.env.example" "$WEB_DIR/.env"
-fi
-if [[ ! -d "$WEB_DIR/node_modules" ]]; then
-  echo "  [!] node_modules missing — running npm install…"
-  (cd "$WEB_DIR" && npm install) 2>&1 | sed 's/^/  [web] /'
-fi
+# Web Frontend
 start "web-frontend" bash -c "cd '$WEB_DIR' && npm run dev"
 
-check_pollers() {
-  local queue="$1" label="$2" tries=15
-  if ! command -v temporal >/dev/null 2>&1; then
-    echo "  [?] $label: 'temporal' CLI not found on PATH — skipping poller check for '$queue'"
-    return 0
-  fi
-  while (( tries > 0 )); do
-    if temporal task-queue describe \
-        --task-queue "$queue" --namespace "$TEMPORAL_NAMESPACE" --address "$TEMPORAL_HOST_PORT" \
-        2>/dev/null | grep -q "Identity"; then
-      echo "  [OK] $label: poller registered on task queue '$queue'"
-      return 0
-    fi
-    sleep 1
-    ((tries--))
-  done
-  echo "  [FAIL] $label: no poller detected on task queue '$queue' after 15s — check logs/dev/${label}.log"
-  return 1
-}
-
 echo ""
-echo "==> Checking Temporal task-queue pollers…"
-check_pollers "CONTROL_TASK_QUEUE" "workflow-worker" || true
-if [[ "$NO_CV" == false ]]; then
-  check_pollers "$CV_TASK_QUEUE" "cv-python-worker" || true
-fi
-
-
+echo "==> Services running. Press Ctrl-C to stop."
 echo ""
-echo "==> Services running.  Press Ctrl-C to stop."
-echo ""
-echo "    mission-svc gRPC  → :50051"
-echo "    ingest-svc  gRPC  → :50052"
-echo "    workflow worker   → Temporal namespace '$TEMPORAL_NAMESPACE'"
-echo "    cv worker         → Temporal task queue '$CV_TASK_QUEUE'"
 echo "    mission-svc REST  → http://localhost:8080"
+echo "    ingest-svc  HTTP  → http://localhost:8081"
 echo "    web frontend      → http://localhost:5173"
+echo "    temporal UI       → http://localhost:8233"
 echo "    logs              → $LOGS/"
 echo ""
 

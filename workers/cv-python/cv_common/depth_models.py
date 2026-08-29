@@ -10,7 +10,9 @@ class DepthAnythingV2Metric:
     """Wraps the metric-head DA-v2 checkpoint (outdoor, up to ~80m range)."""
     CKPT = "depth-anything/Depth-Anything-V2-Metric-Outdoor-Large-hf"
 
-    def __init__(self, device: str = "cuda"):
+    def __init__(self, device: str = None):
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
         self.processor = AutoImageProcessor.from_pretrained(self.CKPT)
         self.model = AutoModelForDepthEstimation.from_pretrained(self.CKPT).to(device).eval()
@@ -25,7 +27,9 @@ class DepthAnythingV2Metric:
         ).squeeze().float().cpu().numpy()
         return depth
 
-def load_backend(device: str = "cuda"):
+def load_backend(device: str = None):
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     backend = os.environ.get("DEPTH_MODEL_BACKEND", "depth_anything_v2_metric")
     if backend == "depth_anything_v2_metric":
         return DepthAnythingV2Metric(device=device)
@@ -44,7 +48,8 @@ def infer_tiled(model, rgb: np.ndarray, tile: int = 896, overlap: int = 128) -> 
 
     for y in range(0, max(h - overlap, 1), stride):
         for x in range(0, max(w - overlap, 1), stride):
-            y0, x0 = min(y, h - tile), min(x, w - tile)
+            y0 = max(0, min(y, h - tile))
+            x0 = max(0, min(x, w - tile))
             actual_tile_h = min(tile, h - y0)
             actual_tile_w = min(tile, w - x0)
             patch = rgb[y0:y0 + actual_tile_h, x0:x0 + actual_tile_w]

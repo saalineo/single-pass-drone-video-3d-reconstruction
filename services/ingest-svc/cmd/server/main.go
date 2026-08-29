@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
+	"net/http"
 	"os"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	ingestv1 "github.com/single-pass-recon/ingest-svc/gen/ingest/v1"
@@ -29,7 +32,9 @@ func main() {
 	secretKey := os.Getenv("MINIO_SECRET_KEY")
 	useTLS := os.Getenv("MINIO_USE_TLS") == "true"
 	bucket := getEnvOrDefault("INGEST_RAW_BUCKET", "recon-raw")
-	port := getEnvOrDefault("INGEST_GRPC_PORT", "50051")
+	grpcPort := getEnvOrDefault("INGEST_GRPC_PORT", "50052")
+	httpPort := getEnvOrDefault("INGEST_HTTP_PORT", "8081")
+	dsn := getEnvOrDefault("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/reconstruction?sslmode=disable")
 
 	mc, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
@@ -46,12 +51,29 @@ func main() {
 	temporalNamespace := getEnvOrDefault("TEMPORAL_NAMESPACE", "recon")
 	temporalClient, err := client.Dial(client.Options{HostPort: temporalHostPort, Namespace: temporalNamespace})
 	if err != nil {
-		log.Fatalf("temporal client: %v", err)
+		log.Printf("warning: temporal client connection failed (%v), continuing without temporal workflow auto-start", err)
+	} else {
+		defer temporalClient.Close()
 	}
-	defer temporalClient.Close()
 
-	launcher := &server.TemporalWorkflowLauncher{Client: temporalClient, Store: store}
+	var launcher server.WorkflowLauncher
+	if temporalClient != nil {
+		launcher = &server.TemporalWorkflowLauncher{Client: temporalClient, Store: store}
+	} else {
+		launcher = &server.DefaultWorkflowLauncher{}
+	}
+
 	srv := server.NewIngestServer(store, launcher)
+
+	// Connect PostgreSQL if available
+	ctx := context.Background()
+	if pool, err := pgxpool.New(ctx, dsn); err == nil {
+		srv.SetDBPool(pool)
+		defer pool.Close()
+	} else {
+		log.Printf("warning: db connection failed (%v), continuing in degraded mode", err)
+	}
+
 	ingestv1.RegisterIngestServiceServer(grpcServer, srv)
 
 	healthSrv := health.NewServer()
@@ -60,12 +82,28 @@ func main() {
 
 	reflection.Register(grpcServer)
 
-	lis, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		log.Fatalf("failed to listen on port %s: %v", port, err)
+	// Start HTTP Server for UI Drag-and-Drop Video Uploads
+	httpMux := http.NewServeMux()
+	httpMux.HandleFunc("/v1/ingest/upload", srv.HandleHTTPUpload)
+
+	httpServer := &http.Server{
+		Addr:    ":" + httpPort,
+		Handler: httpMux,
 	}
 
-	log.Printf("ingest-svc listening on :%s", port)
+	go func() {
+		log.Printf("ingest-svc HTTP listening on :%s", httpPort)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("ingest-svc http server exited: %v", err)
+		}
+	}()
+
+	lis, err := net.Listen("tcp", ":"+grpcPort)
+	if err != nil {
+		log.Fatalf("failed to listen on port %s: %v", grpcPort, err)
+	}
+
+	log.Printf("ingest-svc gRPC listening on :%s", grpcPort)
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("grpc server exited: %v", err)
 	}

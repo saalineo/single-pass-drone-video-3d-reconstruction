@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	ingestv1 "github.com/single-pass-recon/ingest-svc/gen/ingest/v1"
 	"github.com/single-pass-recon/workflows/reconstruction"
 	"go.temporal.io/sdk/client"
@@ -72,6 +73,7 @@ type IngestServer struct {
 	ingestv1.UnimplementedIngestServiceServer
 	store    *VideoStore
 	launcher WorkflowLauncher
+	dbPool   *pgxpool.Pool
 }
 
 func NewIngestServer(store *VideoStore, launcher WorkflowLauncher) *IngestServer {

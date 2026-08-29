@@ -1,9 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { missionApi } from '@/api/missions';
 import { MissionTable } from '@/components/MissionTable';
 import { MissionCard } from '@/components/MissionCard';
+import { VideoDropzone } from '@/components/VideoDropzone';
 
 export default function MissionDashboard() {
+  const queryClient = useQueryClient();
   const {
     data: missions,
     isLoading,
@@ -14,6 +16,10 @@ export default function MissionDashboard() {
     queryFn: missionApi.list,
     refetchInterval: 15_000, 
   });
+
+  const handleUploadSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ['missions'] });
+  };
 
   if (isLoading) return <div className="p-6 text-slate-500">Loading missions…</div>;
   if (isError) {
@@ -26,6 +32,8 @@ export default function MissionDashboard() {
 
   return (
     <div className="mx-auto max-w-5xl p-6">
+      <VideoDropzone onSuccess={handleUploadSuccess} />
+
       <h1 className="mb-4 text-xl font-semibold text-slate-800">Missions</h1>
       <div className="hidden md:block">
         <MissionTable missions={missions ?? []} />
