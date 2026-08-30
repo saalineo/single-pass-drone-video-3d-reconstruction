@@ -60,7 +60,11 @@ func main() {
 	if temporalClient != nil {
 		launcher = &server.TemporalWorkflowLauncher{Client: temporalClient, Store: store}
 	} else {
-		launcher = &server.DefaultWorkflowLauncher{}
+		launcher = &server.LazyTemporalWorkflowLauncher{
+			HostPort:  temporalHostPort,
+			Namespace: temporalNamespace,
+			Store:     store,
+		}
 	}
 
 	srv := server.NewIngestServer(store, launcher)

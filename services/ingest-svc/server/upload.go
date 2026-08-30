@@ -69,6 +69,25 @@ func (t *TemporalWorkflowLauncher) LaunchReconstruction(ctx context.Context, mis
 	return runID, workflowID, nil
 }
 
+// LazyTemporalWorkflowLauncher redials Temporal per-call when the client
+// wasn't available at startup, instead of silently no-op'ing like
+// DefaultWorkflowLauncher (which must stay test-only).
+type LazyTemporalWorkflowLauncher struct {
+	HostPort  string
+	Namespace string
+	Store     *VideoStore
+}
+
+func (l *LazyTemporalWorkflowLauncher) LaunchReconstruction(ctx context.Context, missionID, flightSessionID, preset string, segmentIndices []uint32) (string, string, error) {
+	c, err := client.Dial(client.Options{HostPort: l.HostPort, Namespace: l.Namespace})
+	if err != nil {
+		return "", "", fmt.Errorf("temporal unavailable: %w", err)
+	}
+	defer c.Close()
+	real := &TemporalWorkflowLauncher{Client: c, Store: l.Store}
+	return real.LaunchReconstruction(ctx, missionID, flightSessionID, preset, segmentIndices)
+}
+
 type IngestServer struct {
 	ingestv1.UnimplementedIngestServiceServer
 	store    *VideoStore
