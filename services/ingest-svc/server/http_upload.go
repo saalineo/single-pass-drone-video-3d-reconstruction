@@ -58,6 +58,7 @@ func (s *IngestServer) HandleHTTPUpload(w http.ResponseWriter, r *http.Request) 
 		tempFile    *os.File
 		fileName    = ""
 		fileSize    int64
+		fileSHA256  string
 	)
 
 	for {
@@ -104,8 +105,7 @@ func (s *IngestServer) HandleHTTPUpload(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			fileSize = n
-			sha256Hex := hex.EncodeToString(hasher.Sum(nil))
-			_ = sha256Hex
+			fileSHA256 = hex.EncodeToString(hasher.Sum(nil))
 		}
 	}
 
@@ -133,19 +133,8 @@ func (s *IngestServer) HandleHTTPUpload(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, tempFile); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error": "hash verification: %v"}`, err), http.StatusInternalServerError)
-		return
-	}
-	sha256Hex := hex.EncodeToString(hasher.Sum(nil))
-	if _, err := tempFile.Seek(0, 0); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error": "seek temp file: %v"}`, err), http.StatusInternalServerError)
-		return
-	}
-
 	ctx := r.Context()
-	objectURI, err := s.store.StageAndCommit(ctx, missionID, 0, "web-ui-drag-drop", sha256Hex, tempFile, fileSize)
+	objectURI, err := s.store.StageAndCommit(ctx, missionID, 0, "web-ui-drag-drop", fileSHA256, tempFile, fileSize)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": "failed to store video: %v"}`, err), http.StatusInternalServerError)
 		return
