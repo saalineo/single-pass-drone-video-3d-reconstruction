@@ -217,6 +217,25 @@ $CONTAINER_CMD exec "$MINIO_CONTAINER" mc mb local/recon-raw >/dev/null 2>&1 || 
 $CONTAINER_CMD exec "$MINIO_CONTAINER" mc mb local/recon-dev >/dev/null 2>&1 || ok "Bucket 'recon-dev' ready"
 $CONTAINER_CMD exec "$MINIO_CONTAINER" mc version enable local/recon-dev >/dev/null 2>&1 || true
 
+# Ensure the JetStream stream telemetry-worker consumes from exists
+STREAM_NAME="${TELEMETRY_STREAM:-MISSION_EVENTS}"
+info "Ensuring JetStream stream '$STREAM_NAME' exists…"
+if $CONTAINER_CMD run --rm --network host natsio/nats-box:0.14.3 \
+    nats stream info "$STREAM_NAME" --server nats://127.0.0.1:4222 >/dev/null 2>&1; then
+  ok "JetStream stream '$STREAM_NAME' already exists"
+else
+  $CONTAINER_CMD run --rm --network host natsio/nats-box:0.14.3 \
+    nats stream add "$STREAM_NAME" \
+    --server nats://127.0.0.1:4222 \
+    --subjects 'mission.>,telemetry.>' \
+    --storage file \
+    --retention limits \
+    --max-age 72h \
+    --max-msgs=-1 --max-bytes=-1 --replicas 1 \
+    --discard old --dupe-window 2m --defaults >/dev/null
+  ok "Created JetStream stream '$STREAM_NAME'"
+fi
+
 # Project Workspace Dependencies Initialization
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
