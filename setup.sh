@@ -202,7 +202,7 @@ done
 
 # Check MinIO (9000)
 echo -n "  Waiting for MinIO S3 object store…"
-for _ in {1..20}; do
+for _ in {1..40}; do
   if curl -sS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
     echo " [READY]"
     break
@@ -210,11 +210,30 @@ for _ in {1..20}; do
   sleep 1
 done
 
+ensure_bucket() {
+  local bucket="$1"
+  if $CONTAINER_CMD exec "$MINIO_CONTAINER" mc ls "local/$bucket" >/dev/null 2>&1; then
+    ok "Bucket '$bucket' already exists"
+    return 0
+  fi
+  if $CONTAINER_CMD exec "$MINIO_CONTAINER" mc mb "local/$bucket" >/dev/null 2>&1; then
+    ok "Created bucket '$bucket'"
+    return 0
+  fi
+  err "Failed to create MinIO bucket '$bucket' — is $MINIO_CONTAINER healthy?"
+  echo "--- $MINIO_CONTAINER logs ---" >&2
+  $CONTAINER_CMD logs --tail 40 "$MINIO_CONTAINER" >&2 || true
+  exit 1
+}
+
 # Initialize MinIO Buckets 'recon-raw' and 'recon-dev' if needed
 info "Ensuring MinIO buckets 'recon-raw' and 'recon-dev' exist…"
-$CONTAINER_CMD exec "$MINIO_CONTAINER" mc alias set local http://localhost:9000 minioadmin minioadmin >/dev/null 2>&1 || true
-$CONTAINER_CMD exec "$MINIO_CONTAINER" mc mb local/recon-raw >/dev/null 2>&1 || ok "Bucket 'recon-raw' ready"
-$CONTAINER_CMD exec "$MINIO_CONTAINER" mc mb local/recon-dev >/dev/null 2>&1 || ok "Bucket 'recon-dev' ready"
+if ! $CONTAINER_CMD exec "$MINIO_CONTAINER" mc alias set local http://localhost:9000 minioadmin minioadmin >/dev/null 2>&1; then
+  err "Failed to configure mc alias against $MINIO_CONTAINER — MinIO may not be ready."
+  exit 1
+fi
+ensure_bucket "recon-raw"
+ensure_bucket "recon-dev"
 $CONTAINER_CMD exec "$MINIO_CONTAINER" mc version enable local/recon-dev >/dev/null 2>&1 || true
 
 # Ensure the JetStream stream telemetry-worker consumes from exists
