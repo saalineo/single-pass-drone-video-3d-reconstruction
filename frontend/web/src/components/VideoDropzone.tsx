@@ -19,6 +19,8 @@ export function VideoDropzone({ onSuccess }: VideoDropzoneProps) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successResult, setSuccessResult] = useState<UploadResponse | null>(null);
 
+  const [warnResult, setWarnResult] = useState<UploadResponse | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -67,6 +69,7 @@ export function VideoDropzone({ onSuccess }: VideoDropzoneProps) {
     if (!file) return;
     setIsUploading(true);
     setErrorMsg(null);
+    setWarnResult(null);
     setUploadProgress(0);
 
     try {
@@ -80,6 +83,16 @@ export function VideoDropzone({ onSuccess }: VideoDropzoneProps) {
           setTotalBytes(total);
         }
       );
+
+      if (res.status !== 'started') {
+        // Upload succeeded but the reconstruction workflow did not start.
+        setWarnResult(res);
+        if (onSuccess) {
+          onSuccess(res);
+        }
+        return;
+      }
+
       setSuccessResult(res);
       if (onSuccess) {
         onSuccess(res);
@@ -105,6 +118,7 @@ export function VideoDropzone({ onSuccess }: VideoDropzoneProps) {
     setPreset('standard');
     setUploadProgress(0);
     setErrorMsg(null);
+    setWarnResult(null);
     setSuccessResult(null);
   };
 
@@ -115,7 +129,40 @@ export function VideoDropzone({ onSuccess }: VideoDropzoneProps) {
         Drag and drop a single-pass drone video to initiate automated 3D reconstruction.
       </p>
 
-      {successResult ? (
+      {warnResult ? (
+        <div className="rounded-lg bg-amber-50 p-4 border border-amber-200">
+          <div className="flex items-center space-x-2 text-amber-800 font-semibold mb-2">
+            <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span>Video Uploaded, But Pipeline Launch Pending</span>
+          </div>
+          <p className="text-sm text-amber-700 mb-3">
+            {warnResult.message || 'Video file was uploaded successfully, but the reconstruction workflow could not be launched immediately.'}
+          </p>
+          <div className="text-xs text-slate-600 space-y-1 mb-4">
+            <div><span className="font-mono text-slate-500">Mission ID:</span> {warnResult.mission_id}</div>
+            {warnResult.temporal_workflow_id && (
+              <div><span className="font-mono text-slate-500">Workflow ID:</span> {warnResult.temporal_workflow_id}</div>
+            )}
+            <div><span className="font-mono text-slate-500">Status:</span> <span className="font-semibold text-amber-800">{warnResult.status}</span></div>
+          </div>
+          <div className="flex space-x-3">
+            <button
+              onClick={() => navigate(`/missions/${warnResult.mission_id}`)}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm rounded-lg shadow-sm"
+            >
+              View Mission
+            </button>
+            <button
+              onClick={resetForm}
+              className="px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium text-sm rounded-lg shadow-sm"
+            >
+              Upload Another Video
+            </button>
+          </div>
+        </div>
+      ) : successResult ? (
         <div className="rounded-lg bg-emerald-50 p-4 border border-emerald-200">
           <div className="flex items-center space-x-2 text-emerald-800 font-semibold mb-2">
             <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
