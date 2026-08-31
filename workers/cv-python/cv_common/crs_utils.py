@@ -15,3 +15,9 @@ def ecef_to_utm(points_ecef: np.ndarray, utm_crs: CRS) -> np.ndarray:
     transformer = Transformer.from_crs(ECEF, utm_crs, always_xy=True)
     x, y, z = transformer.transform(points_ecef[:, 0], points_ecef[:, 1], points_ecef[:, 2])
     return np.column_stack([x, y, z])
+
+def lonlat_to_ecef(lon: float, lat: float, alt: float = 0.0) -> np.ndarray:
+    transformer = Transformer.from_crs(WGS84_GEODETIC, ECEF, always_xy=True)
+    x, y, z = transformer.transform(lon, lat, alt)
+    return np.array([x, y, z])
+

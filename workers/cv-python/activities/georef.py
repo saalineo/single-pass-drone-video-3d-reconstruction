@@ -35,6 +35,9 @@ async def apply_georeferencing(mission_id: str, attempt_id: str, aoi_centroid_lo
     def process():
         params = helmert.load_helmert(mission_id, attempt_id)
         utm_crs = crs_utils.utm_crs_for_aoi(*aoi_centroid_lonlat)
+        if np.all(params.translation == 0):
+            # Fallback translation to prevent UTM projection blowup at [0,0,0]
+            params.translation = crs_utils.lonlat_to_ecef(*aoi_centroid_lonlat, 100.0)
 
         try:
             wf_run_id = activity.info().workflow_run_id
