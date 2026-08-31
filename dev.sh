@@ -12,6 +12,11 @@
 #
 set -euo pipefail
 
+# Add Temporal CLI path if it exists in the home directory
+if [[ -d "$HOME/.temporalio/bin" ]]; then
+  export PATH="$HOME/.temporalio/bin:$PATH"
+fi
+
 # Environment Defaults
 : "${MINIO_ENDPOINT:=localhost:9000}"
 : "${MINIO_ACCESS_KEY:=minioadmin}"
@@ -65,9 +70,16 @@ fi
 # Prepare CV Python worker
 CV_DIR="$ROOT/workers/cv-python"
 if [[ "$NO_CV" == false && -d "$CV_DIR" ]]; then
-  if command -v uv >/dev/null 2>&1 && [[ ! -d "$CV_DIR/.venv" ]]; then
-    echo "==> Running 'uv sync' in workers/cv-python…"
-    (cd "$CV_DIR" && uv sync)
+  if command -v uv >/dev/null 2>&1; then
+    if [[ ! -d "$CV_DIR/.venv" ]]; then
+      echo "==> Running 'uv sync' in workers/cv-python…"
+      (cd "$CV_DIR" && uv sync)
+    fi
+  else
+    echo "  [!] cv-python-worker: 'uv' not found on PATH — skipping"
+    echo "      Run: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo "      Or pass --no-cv to silence this."
+    NO_CV=true
   fi
 fi
 
@@ -125,25 +137,30 @@ if [[ "$USE_TMUX" == true ]]; then
   # Pane 2: ingest-svc
   tmux split-window -t "$SESSION:services" -v \
     "cd '$ROOT/services/ingest-svc' && env INGEST_GRPC_PORT=50052 INGEST_HTTP_PORT=8081 bin/ingest-svc 2>&1 | tee '$LOGS/ingest-svc.log'"
+  tmux select-layout -t "$SESSION:services" tiled
 
   # Pane 3: workflow-worker
   tmux split-window -t "$SESSION:services" -h \
     "cd '$ROOT/workflows' && bin/reconstruction-worker 2>&1 | tee '$LOGS/workflow-worker.log'"
+  tmux select-layout -t "$SESSION:services" tiled
 
   # Pane 4: web-frontend
   tmux split-window -t "$SESSION:services" -v \
     "cd '$WEB_DIR' && npm run dev 2>&1 | tee '$LOGS/web-frontend.log'"
+  tmux select-layout -t "$SESSION:services" tiled
 
   # Pane 5: telemetry-worker (if enabled)
   if [[ "$NO_TELEMETRY" == false ]]; then
     tmux split-window -t "$SESSION:services" -h \
       "cd '$ROOT/services/telemetry-worker' && bin/telemetry-worker 2>&1 | tee '$LOGS/telemetry-worker.log'"
+    tmux select-layout -t "$SESSION:services" tiled
   fi
 
   # Pane 6: cv-python-worker (if enabled)
   if [[ "$NO_CV" == false ]]; then
     tmux split-window -t "$SESSION:services" -v \
       "cd '$CV_DIR' && uv run worker.py 2>&1 | tee '$LOGS/cv-python-worker.log'"
+    tmux select-layout -t "$SESSION:services" tiled
   fi
 
   # Pane 7: Temporal task-queue poller checks (dedicated pane so output

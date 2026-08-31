@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { OrbitControls, useProgress } from '@react-three/drei';
 import type { Product, ProductKind } from '@/types/product';
 import { MeshLayer } from './viewer3d/MeshLayer';
 import { SplatLayer } from './viewer3d/SplatLayer';
@@ -8,6 +8,14 @@ import { ViewerControls } from './viewer3d/ViewerControls';
 import { LoadingOverlay } from './viewer3d/LoadingOverlay';
 
 const RENDERABLE: ProductKind[] = ['mesh_glb', 'gaussian_splat'];
+
+function ProgressTracker({ onProgress }: { onProgress: (pct: number) => void }) {
+  const { progress } = useProgress();
+  useEffect(() => {
+    onProgress(progress);
+  }, [progress, onProgress]);
+  return null;
+}
 
 export function Viewer3D({ products }: { products: Product[] }) {
   const renderable = useMemo(
@@ -40,7 +48,12 @@ export function Viewer3D({ products }: { products: Product[] }) {
       <Canvas camera={{ position: [10, 10, 10], fov: 50, near: 0.1, far: 5000 }}>
         <ambientLight intensity={0.7} />
         <directionalLight position={[5, 10, 5]} intensity={1.2} />
-        {active.kind === 'mesh_glb' && <MeshLayer url={active.url} />}
+        {active.kind === 'mesh_glb' && (
+          <>
+            <ProgressTracker onProgress={setLoadPct} />
+            <MeshLayer url={active.url} />
+          </>
+        )}
         {active.kind === 'gaussian_splat' && (
           <SplatLayer url={active.url} onProgress={setLoadPct} />
         )}

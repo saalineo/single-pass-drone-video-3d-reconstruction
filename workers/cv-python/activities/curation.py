@@ -24,6 +24,14 @@ DUPLICATE_OVERLAP_MAX = 0.90
 MAX_PLAUSIBLE_SPEED_MPS = 30.0
 TILE_GRID = (4, 4)
 
+# COLMAP's incremental mapper can technically seed from 3 images (see min_model_size in
+# sfm.py), but that floor is about triangulation math, not about there being enough distinct
+# viewpoints for exhaustive matching to find a well-conditioned init pair. Below this count,
+# "no good initial image pair found" is far more likely than a working reconstruction, so we
+# fail here — in seconds, with the actual drop-reason breakdown — instead of after a full SfM
+# attempt with a bare "0 registered frames".
+MIN_KEYFRAMES_FOR_SFM = 20
+
 # Quality gates are computed per-video (see `compute_adaptive_thresholds`) rather than as
 # fixed constants: a hardcoded absolute blur/exposure bar tuned against one clip's sharpness
 # and lighting silently rejects every frame of a differently-compressed or differently-lit
@@ -40,6 +48,30 @@ ABS_CLIP_CEILING = 0.6
 def compute_set_id(mission_id: str, segment_hashes: list[str], config_version: str) -> tuple[str, str]:
     full = stage_input_hash(mission_id, *segment_hashes, config_version)
     return full, short_id(full)
+
+def describe_drop_reasons(stats: dict[str, int]) -> str:
+    top_drop_reasons = sorted(
+        ((k, v) for k, v in stats.items() if k != "dropped_total"),
+        key=lambda kv: kv[1], reverse=True,
+    )
+    return ", ".join(f"{k}={v}" for k, v in top_drop_reasons) or "no candidate frames decoded"
+
+def require_sufficient_keyframes(num_kept: int, stats: dict[str, int], mission_id: str, set_id: str, cached: bool = False):
+    if num_kept == 0:
+        source = " (cached manifest)" if cached else ""
+        raise ValueError(
+            f"curation kept 0/{stats.get('dropped_total', 0)} frames for mission {mission_id} "
+            f"(set {set_id}){source} — every frame was dropped ({describe_drop_reasons(stats)}); "
+            f"check source footage quality or curation thresholds before continuing the pipeline"
+        )
+    if num_kept < MIN_KEYFRAMES_FOR_SFM:
+        source = " (cached manifest)" if cached else ""
+        raise ValueError(
+            f"curation kept only {num_kept} frame(s) for mission {mission_id} (set {set_id}){source} "
+            f"— below the {MIN_KEYFRAMES_FOR_SFM}-frame floor needed for a reliable SfM init pair "
+            f"(drop reasons: {describe_drop_reasons(stats)}); the source video is likely too short "
+            f"or curation thresholds are dropping too much of it — check those before retrying SfM"
+        )
 
 def gop_boundaries(local_path: Path) -> list[float]:
     """Timestamps (s) of I-frames, used to shard decode work across processes."""
@@ -265,12 +297,7 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
     if exists:
         manifest_json = await loop.run_in_executor(None, get_json, manifest_key)
         manifest = KeyframeManifest.model_validate(manifest_json)
-        if not manifest.frames:
-            raise ValueError(
-                f"curation kept 0 frames for mission {payload.mission_id} (set {set_id}, "
-                f"cached manifest) — every frame was dropped; check source footage quality "
-                f"or curation thresholds before continuing the pipeline"
-            )
+        require_sufficient_keyframes(len(manifest.frames), manifest.stats, payload.mission_id, set_id, cached=True)
         return CurationOutput(
             mission_id=payload.mission_id, set_id=set_id,
             manifest_uri=f"s3://{settings.bucket}/{manifest_key}",
@@ -382,17 +409,7 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
             stats["dropped_total"] += 1
 
 
-    if not kept_frames:
-        top_drop_reasons = sorted(
-            ((k, v) for k, v in stats.items() if k != "dropped_total"),
-            key=lambda kv: kv[1], reverse=True,
-        )
-        reasons = ", ".join(f"{k}={v}" for k, v in top_drop_reasons) or "no candidate frames decoded"
-        raise ValueError(
-            f"curation kept 0/{stats['dropped_total']} frames for mission {payload.mission_id} "
-            f"(set {set_id}) — every frame was dropped ({reasons}); check source footage quality "
-            f"or curation thresholds before continuing the pipeline"
-        )
+    require_sufficient_keyframes(len(kept_frames), stats, payload.mission_id, set_id)
 
     manifest = KeyframeManifest(
         mission_id=payload.mission_id, set_id=set_id, input_content_hash=full_hash,

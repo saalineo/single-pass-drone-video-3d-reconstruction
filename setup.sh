@@ -151,6 +151,7 @@ else
     -p 9001:9001 \
     -e "MINIO_ROOT_USER=minioadmin" \
     -e "MINIO_ROOT_PASSWORD=minioadmin" \
+    -e "MINIO_API_CORS_ALLOW_ORIGIN=*" \
     -v recon-minio-data:/data \
     "$MINIO_IMAGE" \
     server /data --console-address ":9001" >/dev/null
@@ -235,6 +236,8 @@ fi
 ensure_bucket "recon-raw"
 ensure_bucket "recon-dev"
 $CONTAINER_CMD exec "$MINIO_CONTAINER" mc version enable local/recon-dev >/dev/null 2>&1 || true
+$CONTAINER_CMD exec "$MINIO_CONTAINER" mc anonymous set download local/recon-raw >/dev/null 2>&1 || $CONTAINER_CMD exec "$MINIO_CONTAINER" mc policy set download local/recon-raw >/dev/null 2>&1 || true
+$CONTAINER_CMD exec "$MINIO_CONTAINER" mc anonymous set download local/recon-dev >/dev/null 2>&1 || $CONTAINER_CMD exec "$MINIO_CONTAINER" mc policy set download local/recon-dev >/dev/null 2>&1 || true
 
 # Ensure the JetStream stream telemetry-worker consumes from exists
 STREAM_NAME="${TELEMETRY_STREAM:-MISSION_EVENTS}"

@@ -19,4 +19,17 @@ def bake(mesh, mission_id):
     verts = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.triangles)
     tm = trimesh.Trimesh(vertices=verts, faces=faces)
+    
+    # Assign vertex colors based on coordinates to make the mock mesh visible
+    if len(verts) > 0:
+        min_vals = verts.min(axis=0)
+        max_vals = verts.max(axis=0)
+        rng = max_vals - min_vals
+        rng[rng == 0] = 1.0
+        normalized = (verts - min_vals) / rng
+        colors = (normalized * 255).astype(np.uint8)
+        # Add solid alpha channel
+        vertex_colors = np.column_stack([colors, np.full(len(verts), 255, dtype=np.uint8)])
+        tm.visual.vertex_colors = vertex_colors
+        
     return tm

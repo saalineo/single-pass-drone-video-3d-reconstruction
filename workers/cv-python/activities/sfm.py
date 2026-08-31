@@ -44,6 +44,7 @@ def extract_features(db_path: Path, images_dir: Path):
     )
     extraction_options = pycolmap.FeatureExtractionOptions()
     extraction_options.sift = sift_options
+    extraction_options.num_threads = 2
 
     pycolmap.extract_features(
         database_path=str(db_path),

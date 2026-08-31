@@ -147,8 +147,8 @@ func (s *IngestServer) HandleHTTPUpload(w http.ResponseWriter, r *http.Request) 
 			INSERT INTO missions (id, name, classification, aoi, status, created_at, operator_id)
 			VALUES ($1, $2, 'unclassified',
 			        ST_SetSRID(ST_GeomFromGeoJSON('{"type":"Polygon","coordinates":[[[0,0],[0,0.001],[0.001,0.001],[0.001,0],[0,0]]]}'), 4326)::geography,
-			        'ingested', now(), 'web-operator')
-			ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = 'ingested'`
+			        'ingesting', now(), 'web-operator')
+			ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = 'ingesting'`
 		if _, err := s.dbPool.Exec(ctx, q, missionID, missionName); err != nil {
 			log.Printf("[ingest-svc] warning: failed to insert mission DB row: %v", err)
 		}
