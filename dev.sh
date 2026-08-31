@@ -71,6 +71,40 @@ if [[ "$NO_CV" == false && -d "$CV_DIR" ]]; then
   fi
 fi
 
+check_pollers() {
+  local queue="$1" label="$2" tqt="${3:-workflow}" tries=15
+  if ! command -v temporal >/dev/null 2>&1; then
+    echo "  [?] $label: 'temporal' CLI not found on PATH — skipping poller check for '$queue'"
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "  [?] $label: 'jq' not found on PATH — skipping poller check for '$queue'"
+    return 0
+  fi
+  while (( tries > 0 )); do
+    if temporal task-queue describe \
+        --task-queue "$queue" --task-queue-type "$tqt" \
+        --namespace "$TEMPORAL_NAMESPACE" --address "$TEMPORAL_HOST_PORT" \
+        --output json 2>/dev/null | jq -e '.pollers | length > 0' >/dev/null 2>&1; then
+      echo "  [OK] $label: poller registered on task queue '$queue'"
+      return 0
+    fi
+    sleep 1
+    ((tries--))
+  done
+  echo "  [FAIL] $label: no poller detected on task queue '$queue' after 15s — check logs/dev/${label}.log"
+  return 1
+}
+
+run_poller_checks() {
+  echo ""
+  echo "==> Checking Temporal task-queue pollers…"
+  check_pollers "CONTROL_TASK_QUEUE" "workflow-worker" workflow || true
+  if [[ "$NO_CV" == false ]]; then
+    check_pollers "$CV_TASK_QUEUE" "cv-python-worker" activity || true
+  fi
+}
+
 # Check tmux availability for split terminal execution
 USE_TMUX=false
 if [[ "$NO_TMUX" == false ]] && command -v tmux >/dev/null 2>&1; then
@@ -111,6 +145,25 @@ if [[ "$USE_TMUX" == true ]]; then
     tmux split-window -t "$SESSION:services" -v \
       "cd '$CV_DIR' && uv run worker.py 2>&1 | tee '$LOGS/cv-python-worker.log'"
   fi
+
+  # Pane 7: Temporal task-queue poller checks (dedicated pane so output
+  # isn't hidden by tmux's alt-screen and doesn't block attach)
+  POLLER_CHECK_SCRIPT="$LOGS/.poller-check.sh"
+  {
+    echo "#!/usr/bin/env bash"
+    declare -f check_pollers
+    declare -f run_poller_checks
+    echo "NO_CV=$NO_CV"
+    echo "TEMPORAL_NAMESPACE=\"$TEMPORAL_NAMESPACE\""
+    echo "TEMPORAL_HOST_PORT=\"$TEMPORAL_HOST_PORT\""
+    echo "CV_TASK_QUEUE=\"$CV_TASK_QUEUE\""
+    echo "run_poller_checks"
+    echo "echo ''"
+    echo "echo 'Press Enter to close this pane…'"
+    echo "read -r _"
+  } > "$POLLER_CHECK_SCRIPT"
+  chmod +x "$POLLER_CHECK_SCRIPT"
+  tmux split-window -t "$SESSION:services" -v "$POLLER_CHECK_SCRIPT"
 
   # Equalize pane sizes cleanly
   tmux select-layout -t "$SESSION:services" tiled
@@ -180,6 +233,11 @@ start "workflow-worker" "$ROOT/workflows/bin/reconstruction-worker"
 if [[ "$NO_CV" == false ]]; then
   if command -v uv >/dev/null 2>&1; then
     start "cv-python-worker" bash -c "cd '$CV_DIR' && uv run worker.py"
+  else
+    echo "  [!] cv-python-worker: 'uv' not found on PATH — skipping"
+    echo "      Run: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo "      Or pass --no-cv to silence this."
+    NO_CV=true
   fi
 else
   echo "  [skip] cv-python-worker (--no-cv)"
@@ -187,6 +245,8 @@ fi
 
 # Web Frontend
 start "web-frontend" bash -c "cd '$WEB_DIR' && npm run dev"
+
+run_poller_checks
 
 echo ""
 echo "==> Services running. Press Ctrl-C to stop."
