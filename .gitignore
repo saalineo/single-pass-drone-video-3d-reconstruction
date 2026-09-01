@@ -51,7 +51,6 @@ temp/
 Thumbs.db
 architect/
 docs/
-*.md
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -63,4 +62,3 @@ docs/
 *~
 video-footage/example-single-phase-drone-footage.mkv
 .playwright-mcp/
-

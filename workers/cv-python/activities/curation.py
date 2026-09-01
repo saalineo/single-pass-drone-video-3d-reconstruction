@@ -18,7 +18,7 @@ from common.config import settings
 
 CURATION_CONFIG_VERSION = "v1"
 
-TARGET_FPS = 2.0
+TARGET_FPS = 5.0
 WINDOW_S = 1.0 / TARGET_FPS
 DUPLICATE_OVERLAP_MAX = 0.90
 MAX_PLAUSIBLE_SPEED_MPS = 30.0
@@ -175,7 +175,7 @@ def compute_adaptive_thresholds(candidates: list[FrameQuality]) -> tuple[float, 
 def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_name: str, set_id: str) -> list[FrameQuality]:
     cap = cv2.VideoCapture(str(local_mp4))
     cap.set(cv2.CAP_PROP_POS_MSEC, start_s * 1000)
-    
+
     results = []
     prev_gray, prev_ts = None, None
     frame_idx = 0
@@ -184,13 +184,13 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
         pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
         if pos_msec / 1000.0 >= end_s:
             break
-            
+
         ok, frame = cap.read()
         if not ok:
             break
-            
+
         ts = pos_msec / 1000.0
-        
+
         # Downscale to 1080p if larger, for blur scoring consistency
         h, w = frame.shape[:2]
         if w > 1920:
@@ -198,9 +198,9 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
             scoring_frame = cv2.resize(frame, (1920, int(h * scale)))
         else:
             scoring_frame = frame
-            
+
         gray = cv2.cvtColor(scoring_frame, cv2.COLOR_BGR2GRAY)
-        
+
         blur = laplacian_blur_score(gray)
         entropy, clip_lo, clip_hi = exposure_score(scoring_frame)
         dup = overlap_ratio(prev_gray, gray) if prev_gray is not None else 0.0
@@ -242,10 +242,10 @@ def curate_segment_shard(local_mp4: Path, start_s: float, end_s: float, segment_
 
 
         results.append(fq)
-        
+
         prev_gray, prev_ts = gray, ts
         frame_idx += 1
-        
+
     cap.release()
     return results
 
@@ -306,7 +306,7 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
 
     # Shard decode work
     all_scored = []
-    
+
     with ProcessPoolExecutor(max_workers=os.cpu_count() or 1) as pool:
         futures = []
         for local_mp4 in local_segments:
@@ -315,7 +315,7 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
                 boundaries = gop_boundaries(local_mp4)
             except subprocess.CalledProcessError:
                 boundaries = []
-                
+
             if not boundaries:
                 # no I-frames from ffprobe treat whole file as one shard
                 cap = cv2.VideoCapture(str(local_mp4))
