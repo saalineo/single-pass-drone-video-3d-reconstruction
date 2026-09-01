@@ -505,3 +505,8 @@ The mock script performs the following validation steps:
 - Simulates high-rate NATS GPS/IMU telemetry events to `telemetry-worker`.
 - Finalizes ingestion and verifies that Temporal initiates the `ReconstructionWorkflow` execution.
 
+---
+
+By Dev, For Dev, Of Dev
+
+
