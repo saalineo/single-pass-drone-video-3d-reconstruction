@@ -12,6 +12,7 @@ from common.config import settings
 from common.object_store import object_exists, get_json, download_to, put_json, upload_from, key_from_uri
 from common.idempotency import stage_input_hash, short_id
 from activities.vio_parse import parse_vio_warm_start
+from cv_common import learned_features
 
 SFM_MATCHING_CONFIG_VERSION = "v1"
 
@@ -116,7 +117,8 @@ async def extract_and_match_features(payload: SfmFeaturesInput) -> SfmFeaturesOu
     else:
         priors_manifest = None
         
-    attempt_id = _extend_attempt_id(manifest, priors_manifest, SFM_MATCHING_CONFIG_VERSION)
+    config_version = f"{SFM_MATCHING_CONFIG_VERSION}-{settings.feature_backend}"
+    attempt_id = _extend_attempt_id(manifest, priors_manifest, config_version)
     db_path, sfm_dir = sfm_scratch_paths(payload.run_id)
     images_dir = sfm_dir / "images"
     images_dir.mkdir(exist_ok=True)
@@ -127,35 +129,50 @@ async def extract_and_match_features(payload: SfmFeaturesInput) -> SfmFeaturesOu
 
     db = await loop.run_in_executor(None, build_database, manifest, images_dir, db_path)
     activity.heartbeat("keyframes downloaded")
-    
-    await loop.run_in_executor(None, extract_features, db_path, images_dir)
-    activity.heartbeat("features extracted")
+
+    strategy = choose_matching_strategy(priors_manifest, len(manifest.frames))
+    activity.logger.info("matching strategy=%s num_images=%d backend=%s", strategy, len(manifest.frames), settings.feature_backend)
+
+    if settings.feature_backend == "learned":
+        await loop.run_in_executor(None, learned_features.run_learned_feature_pipeline, db_path, images_dir, manifest, priors_manifest, strategy)
+        activity.heartbeat("learned features + matching complete")
+    else:
+        await loop.run_in_executor(None, extract_features, db_path, images_dir)
+        activity.heartbeat("features extracted")
+
+        vocab_tree_path = "/models/vocab_tree_flickr100k.bin"
+        if not Path(vocab_tree_path).exists():
+            vocab_tree_path = ""
+
+        await loop.run_in_executor(None, run_matching, db_path, strategy, vocab_tree_path)
+        activity.heartbeat("matching complete")
 
     if priors_manifest:
         await loop.run_in_executor(None, write_pose_priors, db_path, priors_manifest)
 
-    strategy = choose_matching_strategy(priors_manifest, len(manifest.frames))
-    activity.logger.info("matching strategy=%s num_images=%d", strategy, len(manifest.frames))
-    
-    vocab_tree_path = "/models/vocab_tree_flickr100k.bin"
-    if not Path(vocab_tree_path).exists():
-        vocab_tree_path = ""
-        
-    await loop.run_in_executor(None, run_matching, db_path, strategy, vocab_tree_path)
-    activity.heartbeat("matching complete")
-
     snapshot_key = f"missions/{payload.mission_id}/poses/{attempt_id}/database_snapshot.db.tgz"
     await loop.run_in_executor(None, pack_and_upload_db, db_path, sfm_dir, snapshot_key)
     
-    await loop.run_in_executor(None, put_json, marker_key, {"strategy": strategy, "num_images": len(manifest.frames)})
+    await loop.run_in_executor(None, put_json, marker_key, {"strategy": strategy, "num_images": len(manifest.frames), "feature_backend": settings.feature_backend})
     return SfmFeaturesOutput(mission_id=payload.mission_id, attempt_id=attempt_id, database_uri=str(db_path))
 
 class InsufficientControlPointsError(Exception):
     pass
 
+class SfmCatastrophicFailureError(Exception):
+    pass
+
 MIN_REGISTRATION_FRAC = 0.7
 MAX_MEAN_REPROJ_ERROR_PX = 2.0
 BA_CONFIG_VERSION = "v1"
+
+# mapping_diverged() at MIN_REGISTRATION_FRAC just triggers a relaxed-RANSAC retry — a
+# reasonable soft threshold since partial coverage can still be useful. But if the model
+# is *still* this sparse after the retry (e.g. 4/34 images registered), Dense3DGS/Meshing
+# will happily run on it and produce a handful of disconnected mesh fragments with no
+# error anywhere in the pipeline. Fail loudly instead of shipping that as a "final product".
+MIN_REGISTRATION_FRAC_HARD_FAIL = 0.3
+MIN_REGISTERED_IMAGES_HARD_FAIL = 10
 
 def redownload_database_snapshot(mission_id: str, attempt_id: str, sfm_dir: Path) -> Path:
     snapshot_key = f"missions/{mission_id}/poses/{attempt_id}/database_snapshot.db.tgz"
@@ -374,6 +391,19 @@ async def run_bundle_adjustment(payload: BundleAdjustmentInput) -> BundleAdjustm
             accuracy_warning = "sfm_divergence_fallback_to_priors"
             if reconstruction is None:
                 reconstruction = await loop.run_in_executor(None, build_priors_only_reconstruction, priors_manifest, manifest)
+
+    num_reg_after_retry = reconstruction.num_reg_images() if reconstruction and hasattr(reconstruction, "num_reg_images") else 0
+    reg_frac_after_retry = num_reg_after_retry / max(len(manifest.frames), 1)
+    if num_reg_after_retry < MIN_REGISTERED_IMAGES_HARD_FAIL or reg_frac_after_retry < MIN_REGISTRATION_FRAC_HARD_FAIL:
+        raise SfmCatastrophicFailureError(
+            f"SfM registered only {num_reg_after_retry}/{len(manifest.frames)} images "
+            f"({reg_frac_after_retry:.0%}) for mission {payload.mission_id} attempt {payload.attempt_id} "
+            f"after the relaxed-RANSAC retry — too sparse to produce a usable reconstruction (need "
+            f">= {MIN_REGISTERED_IMAGES_HARD_FAIL} images and >= {MIN_REGISTRATION_FRAC_HARD_FAIL:.0%} "
+            f"registration). This usually means the curated keyframes don't overlap enough for "
+            f"incremental mapping to grow past its seed pair — check source footage motion speed "
+            f"and curation keyframe density before retrying."
+        )
 
     if reconstruction:
         poses = await loop.run_in_executor(None, extract_poses, reconstruction)

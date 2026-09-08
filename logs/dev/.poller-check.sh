@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
+if [[ -d "$HOME/.temporalio/bin" ]]; then export PATH="$HOME/.temporalio/bin:$PATH"; fi
 check_pollers () 
 { 
-    local queue="$1" label="$2" tqt="${3:-workflow}" tries=15;
+    local queue="$1" label="$2" tqt="${3:-workflow}" tries=40;
     if ! command -v temporal > /dev/null 2>&1; then
         echo "  [?] $label: 'temporal' CLI not found on PATH — skipping poller check for '$queue'";
         return 0;
@@ -18,7 +19,7 @@ check_pollers ()
         sleep 1;
         ((tries--));
     done;
-    echo "  [FAIL] $label: no poller detected on task queue '$queue' after 15s — check logs/dev/${label}.log";
+    echo "  [FAIL] $label: no poller detected on task queue '$queue' after timeout — check logs/dev/${label}.log";
     return 1
 }
 run_poller_checks () 

@@ -24,6 +24,15 @@ DUPLICATE_OVERLAP_MAX = 0.90
 MAX_PLAUSIBLE_SPEED_MPS = 30.0
 TILE_GRID = (4, 4)
 
+# A fixed 5fps target quietly starves short/fast single-pass clips: e.g. a 16s clip
+# decimates to ~30-40 keyframes, which is too sparse for incremental SfM to chain
+# reliable overlap between consecutive keyframes (COLMAP stalls at 2-3 registered
+# images and never grows). Single-pass footage has no redundant coverage to spare,
+# so short clips need a *denser* time window, not the same one used for long corridors.
+# We floor the total keyframe count instead of the fps, then derive the window from
+# the actual candidate time span — long clips still land near TARGET_FPS.
+MIN_TOTAL_KEYFRAMES_TARGET = 150
+
 # COLMAP's incremental mapper can technically seed from 3 images (see min_model_size in
 # sfm.py), but that floor is about triangulation math, not about there being enough distinct
 # viewpoints for exhaustive matching to find a well-conditioned init pair. Below this count,
@@ -128,12 +137,20 @@ def gps_jump_flag(prev_fix: GpsFix, cur_fix: GpsFix, dt_s: float) -> bool:
     dist = 2 * R * atan2(sqrt(a), sqrt(1 - a))
     return (dist / dt_s) > MAX_PLAUSIBLE_SPEED_MPS
 
-def select_keyframes(scored: list[FrameQuality]) -> list[FrameQuality]:
+def adaptive_window_s(scored: list[FrameQuality]) -> float:
+    if len(scored) < 2:
+        return WINDOW_S
+    span_s = (scored[-1].timestamp_utc - scored[0].timestamp_utc).total_seconds()
+    if span_s <= 0:
+        return WINDOW_S
+    return min(WINDOW_S, span_s / MIN_TOTAL_KEYFRAMES_TARGET)
+
+def select_keyframes(scored: list[FrameQuality], window_s: float = WINDOW_S) -> list[FrameQuality]:
     scored.sort(key=lambda f: f.timestamp_utc)
     kept, window_start, best = [], None, None
     for f in scored:
         t = f.timestamp_utc.timestamp()
-        if window_start is None or t - window_start >= WINDOW_S:
+        if window_start is None or t - window_start >= window_s:
             if best is not None:
                 kept.append(best)
             window_start, best = t, f
@@ -366,7 +383,12 @@ async def curate_keyframes(payload: CurationInput) -> CurationOutput:
                 pass
 
     threshold_passed = [f for f in all_scored if f.status == "kept"]
-    selected = select_keyframes(threshold_passed)
+    window_s = adaptive_window_s(threshold_passed)
+    activity.logger.info(
+        "keyframe selection window=%.3fs (target_fps=%.1f, %d quality-passed frames)",
+        window_s, 1.0 / window_s if window_s > 0 else float("inf"), len(threshold_passed),
+    )
+    selected = select_keyframes(threshold_passed, window_s)
 
     selected_keys = {f.object_key for f in selected if f.object_key}
     for f in all_scored:

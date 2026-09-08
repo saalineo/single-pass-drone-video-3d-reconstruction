@@ -22,6 +22,10 @@ class Settings:
     # (same env var they read, so one setting keeps all three services aligned) —
     # everything curation produces onward lives in `bucket` below.
     raw_bucket: str = os.environ.get("INGEST_RAW_BUCKET", "recon-raw")
+    # "sift" (pycolmap SIFT extract + match, default) or "learned" (DISK + LightGlue,
+    # see cv_common/learned_features.py) -- opt-in until validated against real-mission
+    # E-1/E-2/E-7 thresholds per architect/08.
+    feature_backend: str = os.environ.get("SFM_FEATURE_BACKEND", "sift")
 
     @property
     def bucket(self) -> str:
