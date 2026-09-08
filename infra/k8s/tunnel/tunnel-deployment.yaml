@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-recon-tunnel
+  namespace: recon-orchestration
+  labels:
+    app: cloudflared-recon-tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared-recon-tunnel
+  template:
+    metadata:
+      labels:
+        app: cloudflared-recon-tunnel
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config.yaml
+            - run
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared
+              readOnly: true
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared-config
+        - name: creds
+          secret:
+            secretName: cloudflared-credentials
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: recon-orchestration
+data:
+  config.yaml: |
+    tunnel: change-me-tunnel-id
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    ingress:
+      # Temporal frontend gRPC (wrapped in TLS / mTLS)
+      - hostname: temporal.recon.yourdomain.com
+        service: https://temporal-frontend.recon-orchestration.svc.cluster.local:7233
+        originRequest:
+          originServerName: temporal-frontend.recon-orchestration.svc.cluster.local
+      # MinIO S3 API
+      - hostname: s3.recon.yourdomain.com
+        service: http://minio.recon-datastores.svc.cluster.local:9000
+      - service: http_status:404

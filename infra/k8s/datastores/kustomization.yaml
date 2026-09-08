@@ -5,3 +5,4 @@ namespace: recon-datastores
 resources:
   - postgresql-secret.yaml
   - minio-secret.yaml
+  - minio-worker-scoped-secret.yaml

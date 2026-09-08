@@ -21,6 +21,23 @@ server:
           user: recon_app
           existingSecret: temporal-postgres-credentials
 
+  # mTLS / Frontend TLS configuration for external worker access
+  tls:
+    frontend:
+      server:
+        certFile: /etc/temporal/certs/tls.crt
+        keyFile: /etc/temporal/certs/tls.key
+        requireClientAuth: true
+        clientCaFiles:
+          - /etc/temporal/certs/ca.crt
+    internode:
+      server:
+        certFile: /etc/temporal/certs/tls.crt
+        keyFile: /etc/temporal/certs/tls.key
+        requireClientAuth: true
+        clientCaFiles:
+          - /etc/temporal/certs/ca.crt
+
   resources:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { cpu: "1", memory: 1Gi }
