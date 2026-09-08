@@ -163,3 +163,51 @@ func TestReconstructionWorkflow_NonRetryableQualityGateFailure(t *testing.T) {
 		t.Fatalf("expected workflow error on QualityGateFailure, got nil")
 	}
 }
+
+func TestReconstructionWorkflow_ColabGPUPresetRouting(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	for _, stage := range pipelineStages {
+		env.RegisterActivityWithOptions(dummyActivity, activity.RegisterOptions{Name: stage.name})
+	}
+
+	for _, stage := range pipelineStages {
+		stageName := stage.name
+		env.OnActivity(stageName, mock.Anything, mock.Anything).Return(
+			func(ctx context.Context, in StageInput) (StageOutput, error) {
+				return StageOutput{
+					OutputURI:  fmt.Sprintf("s3://recon-artifacts/missions/%s/%s/output.json", in.MissionID, stageName),
+					OutputHash: "colab-hash",
+					Metrics:    map[string]float64{"duration_sec": 5.0},
+				}, nil
+			},
+		)
+	}
+
+	input := ReconstructionWorkflowInput{
+		MissionID: "mission-test-colab",
+		RunID:     "run-test-colab",
+		Preset:    "colab-gpu",
+		InputURIs: []string{"s3://recon-raw/missions/mission-test-colab/raw/video/manifest.json"},
+	}
+
+	env.ExecuteWorkflow(ReconstructionWorkflow, input)
+
+	if !env.IsWorkflowCompleted() {
+		t.Fatalf("expected workflow to complete")
+	}
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("expected no workflow error, got: %v", err)
+	}
+
+	var res ReconstructionWorkflowResult
+	if err := env.GetWorkflowResult(&res); err != nil {
+		t.Fatalf("failed to get workflow result: %v", err)
+	}
+
+	if res.Status != "completed" {
+		t.Errorf("expected status 'completed', got %q", res.Status)
+	}
+}
+

@@ -30,6 +30,11 @@ func main() {
 	dsn := getEnvOrDefault("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/reconstruction?sslmode=disable")
 	maxConnsStr := getEnvOrDefault("POSTGRES_MAX_CONNS", "10")
 
+	minioEndpoint := getEnvOrDefault("MINIO_ENDPOINT", "localhost:9000")
+	minioAccessKey := getEnvOrDefault("MINIO_ACCESS_KEY", "minioadmin")
+	minioSecretKey := getEnvOrDefault("MINIO_SECRET_KEY", "minioadmin")
+	minioSecure := os.Getenv("MINIO_SECURE") == "true" || os.Getenv("MINIO_USE_TLS") == "true"
+
 	maxConns, _ := strconv.Atoi(maxConnsStr)
 
 	ctx := context.Background()
@@ -41,6 +46,11 @@ func main() {
 
 	missionStore := db.NewMissionStore(pool)
 	runStore := db.NewRunStore(pool)
+
+	presigner, err := api.NewStoragePresigner(minioEndpoint, minioAccessKey, minioSecretKey, minioSecure)
+	if err != nil {
+		log.Printf("warning: failed to initialize storage presigner (%v)", err)
+	}
 
 	grpcServer := grpc.NewServer()
 	srv := api.NewServer(missionStore, runStore)
@@ -70,7 +80,7 @@ func main() {
 
 	httpAddr := ":" + httpPort
 	log.Printf("mission-svc REST gateway listening on %s", httpAddr)
-	if err := api.RunGateway(ctx, "127.0.0.1:"+grpcPort, httpAddr, missionStore); err != nil {
+	if err := api.RunGateway(ctx, "127.0.0.1:"+grpcPort, httpAddr, missionStore, presigner); err != nil {
 		log.Fatalf("gateway server exited: %v", err)
 	}
 }

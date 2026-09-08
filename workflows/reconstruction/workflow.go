@@ -68,9 +68,14 @@ func ReconstructionWorkflow(ctx workflow.Context, in ReconstructionWorkflowInput
 	sharedParams := map[string]string{}
 	var lastOutput StageOutput
 
+	taskQueue := CVTaskQueue
+	if in.Preset == "colab-gpu" {
+		taskQueue = CVTaskQueueColab
+	}
+
 	for _, spec := range pipelineStages {
 		ao := workflow.ActivityOptions{
-			TaskQueue:           CVTaskQueue,
+			TaskQueue:           taskQueue,
 			StartToCloseTimeout: spec.startToClose,
 			HeartbeatTimeout:    spec.heartbeatTimeout,
 			RetryPolicy: &temporal.RetryPolicy{

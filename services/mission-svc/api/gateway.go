@@ -8,6 +8,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/single-pass-recon/mission-svc/db"
@@ -16,7 +17,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func RunGateway(ctx context.Context, grpcAddr, httpAddr string, missions *db.MissionStore) error {
+type GatewayConfig struct {
+	Presigner *StoragePresigner
+}
+
+func RunGateway(ctx context.Context, grpcAddr, httpAddr string, missions *db.MissionStore, presigner *StoragePresigner) error {
 	grpcMux := runtime.NewServeMux()
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	if err := missionv1.RegisterMissionServiceHandlerFromEndpoint(ctx, grpcMux, grpcAddr, opts); err != nil {
@@ -37,6 +42,50 @@ func RunGateway(ctx context.Context, grpcAddr, httpAddr string, missions *db.Mis
 			ingestURL, _ := url.Parse("http://127.0.0.1:8081")
 			proxy := httputil.NewSingleHostReverseProxy(ingestURL)
 			proxy.ServeHTTP(w, r)
+			return
+		}
+
+		// REST POST /v1/storage/presign - Generate presigned URLs for remote workers
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/storage/presign" {
+			w.Header().Set("Content-Type", "application/json")
+			if presigner == nil {
+				http.Error(w, `{"error": "presigner not configured"}`, http.StatusServiceUnavailable)
+				return
+			}
+			var req struct {
+				Bucket    string `json:"bucket"`
+				ObjectKey string `json:"object_key"`
+				Method    string `json:"method"` // "GET" or "PUT"
+				ExpirySec int    `json:"expiry_seconds"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error": "invalid request payload: %v"}`, err), http.StatusBadRequest)
+				return
+			}
+			ttl := 4 * time.Hour // Default 4 hours for long reconstruction runs per Phase 3 / E-7
+			if req.ExpirySec > 0 {
+				ttl = time.Duration(req.ExpirySec) * time.Second
+			}
+
+			var signedURL string
+			var err error
+			if strings.ToUpper(req.Method) == "PUT" {
+				signedURL, err = presigner.GeneratePresignedPut(r.Context(), req.Bucket, req.ObjectKey, ttl)
+			} else {
+				signedURL, err = presigner.GeneratePresignedGet(r.Context(), req.Bucket, req.ObjectKey, ttl)
+			}
+			if err != nil {
+				http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
+				return
+			}
+
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"url":            signedURL,
+				"bucket":         req.Bucket,
+				"object_key":     req.ObjectKey,
+				"method":         req.Method,
+				"expiry_seconds": int(ttl.Seconds()),
+			})
 			return
 		}
 
@@ -96,4 +145,3 @@ func RunGateway(ctx context.Context, grpcAddr, httpAddr string, missions *db.Mis
 
 	return http.ListenAndServe(httpAddr, handler)
 }
-

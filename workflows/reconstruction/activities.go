@@ -2,7 +2,8 @@ package reconstruction
 
 const (
 	ControlTaskQueue = "CONTROL_TASK_QUEUE" // hosts ReconstructionWorkflow itself
-	CVTaskQueue      = "CV_TASK_QUEUE"      // hosts all Python activity implementations
+	CVTaskQueue      = "CV_TASK_QUEUE"      // hosts all Python activity implementations (default/local)
+	CVTaskQueueColab = "CV_TASK_QUEUE_COLAB" // dedicated queue for Colab GPU workers
 )
 
 // Activity names are strings, not Go function references, because the
