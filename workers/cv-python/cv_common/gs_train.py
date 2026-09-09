@@ -87,7 +87,7 @@ def save_checkpoint(path, means, scales, quats, opacities, sh_coeffs, optimizer,
     torch.save(state, str(path))
 
 def load_checkpoint(path, device="cpu"):
-    return torch.load(str(path), map_location=device)
+    return torch.load(str(path), map_location=device, weights_only=False)
 
 def train(dataset, total_steps: int = 30_000, sh_degree: int = 3,
           optimize_poses: bool = False, log_every: int = 500,

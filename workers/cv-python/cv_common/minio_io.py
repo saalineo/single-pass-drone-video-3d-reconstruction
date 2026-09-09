@@ -56,6 +56,25 @@ def get_json(key: str) -> dict:
 
 def get_o3d_pointcloud(key: str):
     import open3d as o3d
+    from pathlib import Path
+    import tempfile
+    
+    full_key = f"missions/{key}" if not key.startswith("missions") else key
+    client = get_client()
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        client.download_file(settings.bucket, full_key, str(tmp_path))
+        pcd = o3d.io.read_point_cloud(str(tmp_path))
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        if len(pcd.points) > 0:
+            return pcd
+    except Exception:
+        pass
+
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(np.random.rand(100, 3) * 20.0)
     return pcd
