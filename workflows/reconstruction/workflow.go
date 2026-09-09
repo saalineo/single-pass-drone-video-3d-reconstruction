@@ -33,14 +33,14 @@ type stageSpec struct {
 }
 
 var pipelineStages = []stageSpec{
-	{ActivityCuration, 1 * time.Hour, 10 * time.Minute, 5, "cpu-standard"},
-	{ActivitySfM, 2 * time.Hour, 10 * time.Minute, 5, "gpu-standard"},
-	{ActivityMasking, 90 * time.Minute, 10 * time.Minute, 5, "gpu-standard"},
-	{ActivityDepth, 3 * time.Hour, 10 * time.Minute, 5, "gpu-standard"},
-	{ActivityDense3DGS, 6 * time.Hour, 10 * time.Minute, 3, "gpu-high-vram"},
-	{ActivityMeshing, 2 * time.Hour, 10 * time.Minute, 5, "gpu-standard"},
-	{ActivityGeoref, 30 * time.Minute, 5 * time.Minute, 5, "cpu-standard"},
-	{ActivityProductGen, 90 * time.Minute, 10 * time.Minute, 5, "gpu-standard"},
+	{ActivityCuration, 1 * time.Hour, 2 * time.Minute, 5, "cpu-standard"},
+	{ActivitySfM, 2 * time.Hour, 2 * time.Minute, 5, "gpu-standard"},
+	{ActivityMasking, 90 * time.Minute, 2 * time.Minute, 5, "gpu-standard"},
+	{ActivityDepth, 3 * time.Hour, 2 * time.Minute, 5, "gpu-standard"},
+	{ActivityDense3DGS, 6 * time.Hour, 2 * time.Minute, 5, "gpu-high-vram"},
+	{ActivityMeshing, 2 * time.Hour, 2 * time.Minute, 5, "gpu-standard"},
+	{ActivityGeoref, 30 * time.Minute, 2 * time.Minute, 5, "cpu-standard"},
+	{ActivityProductGen, 90 * time.Minute, 2 * time.Minute, 5, "gpu-standard"},
 }
 
 // stageDeps records, per activity, which prior activities' artifacts it needs as

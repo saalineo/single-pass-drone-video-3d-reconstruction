@@ -160,9 +160,11 @@ async def mask_dynamic_objects(payload: MaskingInput) -> MaskingOutput:
         except Exception:
             return None, None
             
+    activity.heartbeat("loading models")
     processor, detector = await loop.run_in_executor(None, load_models)
     predictor = await loop.run_in_executor(None, build_predictor)
     
+    activity.heartbeat("running masking pass")
     records = await loop.run_in_executor(None, process_and_upload, payload, manifest, set_id, predictor, processor, detector, frames_dir)
     activity.heartbeat("propagation complete")
 

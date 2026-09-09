@@ -1,4 +1,6 @@
 import torch
+from pathlib import Path
+
 
 def ssim_masked(img1, img2, mask, window_size=11, size_average=True):
     try:
@@ -71,12 +73,27 @@ def load_dataset(dataset_dir):
     except ImportError:
         return MockDataset()
 
-def save_checkpoint(path, means, scales, quats, opacities, sh_coeffs, optimizer, step):
-    # TODO: persist Gaussian params and optimizer state
-    pass
+def save_checkpoint(path, means, scales, quats, opacities, sh_coeffs, optimizer, step: int, metrics_log: list | None = None):
+    state = {
+        "step": step,
+        "means": means.detach().cpu() if isinstance(means, torch.Tensor) else means,
+        "scales": scales.detach().cpu() if isinstance(scales, torch.Tensor) else scales,
+        "quats": quats.detach().cpu() if isinstance(quats, torch.Tensor) else quats,
+        "opacities": opacities.detach().cpu() if isinstance(opacities, torch.Tensor) else opacities,
+        "sh_coeffs": sh_coeffs.detach().cpu() if isinstance(sh_coeffs, torch.Tensor) else sh_coeffs,
+        "optimizer": optimizer.state_dict() if optimizer else None,
+        "metrics_log": metrics_log or [],
+    }
+    torch.save(state, str(path))
+
+def load_checkpoint(path, device="cpu"):
+    return torch.load(str(path), map_location=device)
+
 def train(dataset, total_steps: int = 30_000, sh_degree: int = 3,
           optimize_poses: bool = False, log_every: int = 500,
-          checkpoint_every: int = 5000, checkpoint_dir=None, heartbeat_callback=None):
+          checkpoint_every: int = 5000, checkpoint_dir=None,
+          resume_checkpoint_path=None, heartbeat_callback=None,
+          on_checkpoint_saved=None):
     
     try:
         import gsplat
@@ -85,12 +102,28 @@ def train(dataset, total_steps: int = 30_000, sh_degree: int = 3,
         metrics_log = [{"step": total_steps, "opacity_mean": 0.5, "scale_frac_degenerate": 0.05, "n_gaussians": 100}]
         return dict(means=None, scales=None, quats=None, opacities=None, sh_coeffs=None), metrics_log
 
-    means, scales, quats, opacities, sh_coeffs = gsplat.init_from_colmap(
-        dataset.sparse_pc, sh_degree=sh_degree)
+    start_step = 0
+    metrics_log = []
+
+    if resume_checkpoint_path and Path(resume_checkpoint_path).exists():
+        ckpt = load_checkpoint(resume_checkpoint_path)
+        start_step = ckpt.get("step", 0) + 1
+        metrics_log = ckpt.get("metrics_log", [])
+        means = ckpt["means"]
+        scales = ckpt["scales"]
+        quats = ckpt["quats"]
+        opacities = ckpt["opacities"]
+        sh_coeffs = ckpt["sh_coeffs"]
+        opt_state = ckpt.get("optimizer")
+    else:
+        means, scales, quats, opacities, sh_coeffs = gsplat.init_from_colmap(
+            dataset.sparse_pc, sh_degree=sh_degree)
+        opt_state = None
 
     params = [means, scales, quats, opacities, sh_coeffs]
     for p in params:
-        p.requires_grad_(True)
+        if isinstance(p, torch.Tensor):
+            p.requires_grad_(True)
         
     optimizer = torch.optim.Adam([
         {"params": [means], "lr": 1.6e-4},
@@ -99,10 +132,15 @@ def train(dataset, total_steps: int = 30_000, sh_degree: int = 3,
         {"params": [opacities], "lr": 5e-2},
         {"params": [sh_coeffs], "lr": 2.5e-3},
     ])
+    if opt_state is not None:
+        try:
+            optimizer.load_state_dict(opt_state)
+        except Exception:
+            pass
+
     strategy = DefaultStrategy(cap_max=3_000_000)
 
-    metrics_log = []
-    for step in range(total_steps):
+    for step in range(start_step, total_steps):
         cam = dataset.sample_camera(step)
         rendered_rgb, rendered_depth, _ = gsplat.rasterization(
             means, quats, scales, opacities, sh_coeffs,
@@ -120,8 +158,11 @@ def train(dataset, total_steps: int = 30_000, sh_degree: int = 3,
             stats = convergence_stats(opacities, scales)
             metrics_log.append({"step": step, **losses_scalars(losses), **stats})
         if checkpoint_dir and step % checkpoint_every == 0 and step > 0:
-            save_checkpoint(checkpoint_dir / f"step_{step}.pt", means, scales, quats,
-                             opacities, sh_coeffs, optimizer, step)
+            ckpt_file = Path(checkpoint_dir) / f"step_{step}.pt"
+            save_checkpoint(ckpt_file, means, scales, quats,
+                             opacities, sh_coeffs, optimizer, step, metrics_log=metrics_log)
+            if on_checkpoint_saved:
+                on_checkpoint_saved(ckpt_file, step)
                              
         if heartbeat_callback and step % 100 == 0:
             heartbeat_callback(f"training step {step}/{total_steps}")
